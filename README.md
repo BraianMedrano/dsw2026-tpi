@@ -7,6 +7,19 @@
 - Fernando Chumba — Legajo 53951
 - Tobias Juarez Julio — Legajo 57424
 
+## Orden de implementación del backend
+
+1. Base común: capas, DTOs, manejo global de errores y migraciones.
+2. Autenticación y autorización: usuarios, roles, JWT y administrador inicial.
+3. Especialidades.
+4. Médicos.
+5. Disponibilidades y generación de slots de 30 minutos.
+6. Citas: reserva, consulta y cancelación.
+7. Búsquedas administrativas de turnos.
+8. Pruebas, validaciones, logging y documentación final.
+
+Las ramas se organizan por módulo funcional, no por capa técnica, para reducir dependencias entre integrantes.
+
 Acceso al [documento](https://frtutneduar-my.sharepoint.com/:b:/g/personal/franciscovicente_doc_frt_utn_edu_ar/IQD-5kaAARqnT5eL7EnPMCPgAX2LFXXX6e3p-u1C43z5rsQ?e=lbbpnz)
 
 Instrucciones:
