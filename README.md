@@ -1,6 +1,12 @@
 # Trabajo Práctico Integrador
 ## Desarrollo de Software 2026
 
+## Integrantes
+
+- Braian Medrano — Legajo 57121
+- Fernando Chumba — Legajo 53951
+- Tobias Juarez Julio — Legajo 57424
+
 Acceso al [documento](https://frtutneduar-my.sharepoint.com/:b:/g/personal/franciscovicente_doc_frt_utn_edu_ar/IQD-5kaAARqnT5eL7EnPMCPgAX2LFXXX6e3p-u1C43z5rsQ?e=lbbpnz)
 
 Instrucciones:
