@@ -2,7 +2,6 @@
 using Dsw2026Tpi.CrossCutting.Models;
 using Dsw2026Tpi.CrossCutting.Resources;
 using System.Net;
-using System.Text.Json;
 
 namespace Dsw2026Tpi.Api.Middlewares;
 
@@ -21,6 +20,7 @@ public class ExceptionHandlingMiddleware
     {
         try
         {
+            // Ejecuta el resto del pipeline; las excepciones posteriores regresan hasta este catch.
             await _next(context);
         }
         catch (Exception ex)
@@ -34,18 +34,18 @@ public class ExceptionHandlingMiddleware
     {
         ErrorResponse error = ex is AppException exApp ? 
             exApp.Error : 
+            // Los errores inesperados usan un mensaje genérico para no exponer información interna.
             new ErrorResponse(nameof(ErrorCodes.UNHANDLED_ERROR), ErrorCodes.UNHANDLED_ERROR);
         var status = ex switch
         {
             ValidationException => HttpStatusCode.BadRequest,
             EntityNotFoundException => HttpStatusCode.NotFound,
-            ConflictException or AuthenticationException => HttpStatusCode.Conflict,
-            AuthorizationException => HttpStatusCode.Unauthorized,
+            AuthenticationException => HttpStatusCode.Unauthorized,
+            AuthorizationException => HttpStatusCode.Forbidden,
+            ConflictException => HttpStatusCode.Conflict,
             _ => HttpStatusCode.InternalServerError,
         };
-        var result = JsonSerializer.Serialize(error);
-        context.Response.ContentType = "application/json";
         context.Response.StatusCode = (int)status;
-        await context.Response.WriteAsync(result);
+        await context.Response.WriteAsJsonAsync(error);
     }
 }

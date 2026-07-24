@@ -1,4 +1,6 @@
 ﻿using Dsw2026Tpi.CrossCutting.Identity;
+using Dsw2026Tpi.CrossCutting.Models;
+using Dsw2026Tpi.CrossCutting.Resources;
 using Dsw2026Tpi.Data.Identity;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
@@ -11,6 +13,7 @@ public static class SecurityConfigurationExtensions
 {
     public static IServiceCollection AddAppAuthentication(this IServiceCollection services, IConfiguration configuration)
     {
+        // JWT valida el token de cada petición; la gestión y persistencia de usuarios se configura con Identity.
         //Obtener parámetros para creación del JWT desde appsettings.json
         var jwtConfig = configuration.GetSection("Jwt");
         var keyText = jwtConfig["Key"] ?? throw new ArgumentNullException("JWT Key");
@@ -37,6 +40,26 @@ public static class SecurityConfigurationExtensions
                     ValidIssuer = issuer,
                     ValidAudience = audience,
                     IssuerSigningKey = new SymmetricSecurityKey(key)
+                };
+                options.Events = new JwtBearerEvents
+                {
+                    OnChallenge = async context =>
+                    {
+                        context.HandleResponse();
+                        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                        await context.Response.WriteAsJsonAsync(
+                            new ErrorResponse(
+                                nameof(ErrorCodes.AUTHENTICATION_FAILED),
+                                ErrorCodes.AUTHENTICATION_FAILED));
+                    },
+                    OnForbidden = async context =>
+                    {
+                        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                        await context.Response.WriteAsJsonAsync(
+                            new ErrorResponse(
+                                nameof(ErrorCodes.AUTHORIZATION_FAILED),
+                                ErrorCodes.AUTHORIZATION_FAILED));
+                    }
                 };
             });
         services.AddAuthorizationBuilder()
@@ -85,11 +108,12 @@ public static class SecurityConfigurationExtensions
 
     public static IServiceCollection AddAppIdentity(this IServiceCollection services)
     {
+        // Identity administra usuarios, contraseñas y roles mediante AuthenticationDbContext.
         services.AddIdentityCore<ApplicationUser>(options =>
         {
             options.Password = new PasswordOptions
             {
-                RequiredLength = 6,
+                RequiredLength = 8,
                 RequireLowercase = true,
                 RequireUppercase = true,
                 RequireDigit = true

@@ -1,7 +1,10 @@
 using Dsw2026Tpi.Api.Configurations;
 using Dsw2026Tpi.Api.Middlewares;
+using Dsw2026Tpi.CrossCutting.Models;
+using Dsw2026Tpi.CrossCutting.Resources;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Mvc;
 using Serilog;
 
 namespace Dsw2026Tpi.Api;
@@ -29,7 +32,22 @@ public class Program
             builder.Services.AddApplicationPersistence(builder.Configuration);
             builder.Services.AddAppCors(builder.Configuration);
             builder.Services.AddAppDependencies();
-            builder.Services.AddControllers();
+            builder.Services.AddControllers()
+                .ConfigureApiBehaviorOptions(options =>
+                {
+                    options.InvalidModelStateResponseFactory = context =>
+                    {
+                        var error = new ErrorResponse(
+                            nameof(ErrorCodes.VALIDATION_ERROR),
+                            ErrorCodes.VALIDATION_ERROR);
+                        error.AddDetail(
+                            context.ModelState
+                                .Where(entry => entry.Value?.Errors.Count > 0)
+                                .SelectMany(entry => entry.Value!.Errors.Select(modelError =>
+                                    (entry.Key, modelError.ErrorMessage))));
+                        return new BadRequestObjectResult(error);
+                    };
+                });
             builder.Services.AddHealthChecks();
 
             var app = builder.Build();
@@ -46,10 +64,10 @@ public class Program
                 app.UseSwaggerUI();
             }
 
+            app.UseMiddleware<ExceptionHandlingMiddleware>();
             app.UseAuthentication();
             app.UseAuthorization();
             app.UseCors();
-            app.UseMiddleware<ExceptionHandlingMiddleware>();
 
             app.MapControllers();
             app.MapHealthChecks("/health-check");
