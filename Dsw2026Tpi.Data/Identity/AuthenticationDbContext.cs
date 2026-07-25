@@ -16,7 +16,14 @@ public class AuthenticationDbContext: IdentityDbContext
     {
         base.OnModelCreating(builder);
 
-        builder.Entity<ApplicationUser>(b => { b.ToTable("ApplicationUsers"); });
+        builder.Entity<ApplicationUser>(b =>
+        {
+            b.ToTable("ApplicationUsers");
+            b.Property(user => user.Dni).HasMaxLength(8);
+            // SQLite permite varios NULL en un índice único: los administradores no tienen DNI,
+            // pero dos pacientes nunca pueden compartirlo.
+            b.HasIndex(user => user.Dni).IsUnique();
+        });
         builder.Entity<IdentityUser>(b => { b.ToTable("Users"); });
         builder.Entity<IdentityRole>(b => { b.ToTable("Roles"); });
         builder.Entity<IdentityUserRole<string>>(b => { b.ToTable("UsersRoles"); });

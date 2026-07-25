@@ -10,6 +10,7 @@ using Dsw2026Tpi.Application.Interfaces;
 using Dsw2026Tpi.Application.Services;
 using Dsw2026Tpi.CrossCutting.Identity;
 using Dsw2026Tpi.Data;
+using Dsw2026Tpi.Data.Identity;
 using Dsw2026Tpi.Domain.Entities;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
@@ -275,12 +276,24 @@ public class SpecialtiesApiTests : IClassFixture<SpecialtiesApiFactory>
 
 public sealed class SpecialtiesApiFactory : WebApplicationFactory<Program>
 {
+    private const string AdministratorEmail = "administrator@example.com";
+    private const string AdministratorPassword = "Admin1!x";
     private const string AuthenticationScheme = "SpecialtiesTest";
     private readonly SqliteConnection _connection = new("Data Source=:memory:");
+    private readonly SqliteConnection _identityConnection = new("Data Source=:memory:");
 
     public SpecialtiesApiFactory()
     {
         _connection.Open();
+        _identityConnection.Open();
+
+        // Program ejecuta el bootstrap antes de crear el cliente; por eso Identity
+        // necesita su esquema y credenciales de prueba desde el inicio del host.
+        var options = new DbContextOptionsBuilder<AuthenticationDbContext>()
+            .UseSqlite(_identityConnection)
+            .Options;
+        using var context = new AuthenticationDbContext(options);
+        context.Database.EnsureCreated();
     }
 
     public HttpClient CreateAdministratorClient() =>
@@ -305,6 +318,8 @@ public sealed class SpecialtiesApiFactory : WebApplicationFactory<Program>
         builder.UseSetting("Jwt:Key", "01234567890123456789012345678901");
         builder.UseSetting("Jwt:Issuer", "test-issuer");
         builder.UseSetting("Jwt:Audience", "test-audience");
+        builder.UseSetting("InitialAdministrator:Email", AdministratorEmail);
+        builder.UseSetting("InitialAdministrator:Password", AdministratorPassword);
         builder.ConfigureAppConfiguration((_, configuration) =>
         {
             configuration.AddInMemoryCollection(new Dictionary<string, string?>
@@ -313,7 +328,9 @@ public sealed class SpecialtiesApiFactory : WebApplicationFactory<Program>
                 ["AllowedHosts"] = "*",
                 ["Jwt:Key"] = "01234567890123456789012345678901",
                 ["Jwt:Issuer"] = "test-issuer",
-                ["Jwt:Audience"] = "test-audience"
+                ["Jwt:Audience"] = "test-audience",
+                ["InitialAdministrator:Email"] = AdministratorEmail,
+                ["InitialAdministrator:Password"] = AdministratorPassword
             });
         });
         builder.ConfigureTestServices(services =>
@@ -322,6 +339,11 @@ public sealed class SpecialtiesApiFactory : WebApplicationFactory<Program>
             services.RemoveAll<DbContextOptions<Dsw2026TpiDbContext>>();
             services.AddSingleton(_connection);
             services.AddDbContext<Dsw2026TpiDbContext>(options => options.UseSqlite(_connection));
+
+            services.RemoveAll<AuthenticationDbContext>();
+            services.RemoveAll<DbContextOptions<AuthenticationDbContext>>();
+            services.AddDbContext<AuthenticationDbContext>(
+                options => options.UseSqlite(_identityConnection));
 
             services.AddAuthentication(options =>
                 {
@@ -349,6 +371,7 @@ public sealed class SpecialtiesApiFactory : WebApplicationFactory<Program>
         if (disposing)
         {
             _connection.Dispose();
+            _identityConnection.Dispose();
         }
     }
 }

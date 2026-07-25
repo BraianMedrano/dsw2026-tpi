@@ -22,3 +22,12 @@ dotnet ef database update --context AuthenticationDbContext --project Dsw2026Tpi
 ```
 
 Estos comandos crean `Dsw2026Tpi.Api/Dsw2026Tpi.db`. La base de datos y sus archivos auxiliares temporales están ignorados por Git. Para reconstruirla desde cero, detener la API, eliminar esos archivos locales y volver a ejecutar ambos comandos de migración.
+
+## Flujo equivalente en Visual Studio
+
+1. Seleccionar `Dsw2026Tpi.Api` como proyecto de inicio.
+2. Usar **Build > Build Solution** para compilar.
+3. Abrir **Test > Test Explorer** y ejecutar todos los tests o el grupo `Authentication`.
+4. Iniciar con el perfil HTTPS para que Development aplique las migraciones existentes y abra Swagger.
+
+La interfaz de Visual Studio y los comandos anteriores ejecutan el mismo build y los mismos tests. Los comandos quedan documentados para CI y para diagnosticar fallos, pero no son obligatorios para el trabajo cotidiano.

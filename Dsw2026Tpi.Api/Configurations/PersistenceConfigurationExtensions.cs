@@ -13,6 +13,8 @@ public static class PersistenceConfigurationExtensions
     {
         // Lee desde appsettings la cadena de conexión SQLite compartida.
         var connectionString = configuration.GetConnectionString("DefaultConnection");
+        // Path.Combine usa el separador correcto tanto en Windows como en Linux.
+        var rolesDataSource = Path.Combine("Sources", "roles.json");
 
         // Mantiene aislados los modelos de dominio e Identity aunque usen una misma base local portable.
         services.AddDbContext<Dsw2026TpiDbContext>(options =>
@@ -23,10 +25,14 @@ public static class PersistenceConfigurationExtensions
         services.AddDbContext<AuthenticationDbContext>(options =>
         {
             options.UseSqlite(connectionString);
-            options.UseSeeding((c, t) =>
+            options.UseSeeding((context, _) =>
             {
-                c.Seedwork<IdentityRole>("Sources\\roles.json");
+                context.Seedwork<IdentityRole>(rolesDataSource);
             });
+            options.UseAsyncSeeding((context, _, cancellationToken) =>
+                context.SeedworkAsync<IdentityRole>(
+                    rolesDataSource,
+                    cancellationToken));
         });
         return services;
     }

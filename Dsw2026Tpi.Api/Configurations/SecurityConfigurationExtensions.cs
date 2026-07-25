@@ -3,6 +3,7 @@ using Dsw2026Tpi.CrossCutting.Models;
 using Dsw2026Tpi.CrossCutting.Resources;
 using Dsw2026Tpi.Data.Identity;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
@@ -63,6 +64,11 @@ public static class SecurityConfigurationExtensions
                 };
             });
         services.AddAuthorizationBuilder()
+            // La política de respaldo protege cualquier endpoint nuevo aunque alguien olvide [Authorize].
+            // Solo una acción marcada explícitamente con [AllowAnonymous] queda pública.
+            .SetFallbackPolicy(new AuthorizationPolicyBuilder()
+                .RequireAuthenticatedUser()
+                .Build())
             .AddPolicy(Policies.AdminPolicy, policy =>
                 policy.RequireRole(Roles.Administrator))
             .AddPolicy(Policies.PatientPolicy, policy =>
