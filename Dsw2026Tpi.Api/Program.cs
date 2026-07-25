@@ -1,5 +1,6 @@
 using Dsw2026Tpi.Api.Configurations;
 using Dsw2026Tpi.Api.Middlewares;
+using Dsw2026Tpi.Api.Services;
 using Dsw2026Tpi.CrossCutting.Models;
 using Dsw2026Tpi.CrossCutting.Resources;
 using Microsoft.AspNetCore.Authentication;
@@ -52,6 +53,13 @@ public class Program
 
             var app = builder.Build();
 
+            await using (var scope = app.Services.CreateAsyncScope())
+            {
+                var initializer =
+                    scope.ServiceProvider.GetRequiredService<ApplicationStartupInitializer>();
+                await initializer.InitializeAsync();
+            }
+
             app.UseSerilogRequestLogging();
 
             if (app.Environment.IsProduction())
@@ -70,7 +78,8 @@ public class Program
             app.UseCors();
 
             app.MapControllers();
-            app.MapHealthChecks("/health-check");
+            // La consigna deja públicos únicamente los dos login; el estado interno también requiere token.
+            app.MapHealthChecks("/health-check").RequireAuthorization();
 
             Log.Information("Aplicación iniciada correctamente");
 

@@ -23,10 +23,14 @@ public static class PersistenceConfigurationExtensions
         services.AddDbContext<AuthenticationDbContext>(options =>
         {
             options.UseSqlite(connectionString);
-            options.UseSeeding((c, t) =>
+            options.UseSeeding((context, _) =>
             {
-                c.Seedwork<IdentityRole>("Sources\\roles.json");
+                context.Seedwork<IdentityRole>("Sources\\roles.json");
             });
+            options.UseAsyncSeeding((context, _, cancellationToken) =>
+                context.SeedworkAsync<IdentityRole>(
+                    "Sources\\roles.json",
+                    cancellationToken));
         });
         return services;
     }
