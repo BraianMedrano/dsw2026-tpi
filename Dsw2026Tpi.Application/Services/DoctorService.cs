@@ -1,27 +1,111 @@
-﻿using Dsw2026Tpi.Application.Dtos;
+using Dsw2026Tpi.Application.Dtos;
 using Dsw2026Tpi.Application.Interfaces;
+using Dsw2026Tpi.CrossCutting.Exceptions;
+using Dsw2026Tpi.Data;
 using Dsw2026Tpi.Domain.Entities;
-using Dsw2026Tpi.Domain.Interfaces;
+using Microsoft.EntityFrameworkCore;
 
 namespace Dsw2026Tpi.Application.Services;
 
 public class DoctorService : IDoctorService
 {
-    private readonly IPersistence _persistence;
+    private readonly Dsw2026TpiDbContext _context;
 
-    public DoctorService(IPersistence persistence)
+    public DoctorService(Dsw2026TpiDbContext context)
     {
-        _persistence = persistence;
+        _context = context;
     }
 
-    public async Task<Pagination<DoctorModel.Response>> GetAll(int pageSize, int pageIndex, string? name = null)
+    public async Task<DoctorModel.PagedResponse> GetAllAsync(
+        int pageSize,
+        int pageIndex,
+        string? name = null)
     {
-        // Application define el filtro y el orden, pero delega la consulta concreta al contrato de persistencia.
-        var doctors = await _persistence.Paginate<Doctor, string>(pageSize, pageIndex, d => string.IsNullOrWhiteSpace(name) ||
-                                                   d.Name.Contains(name), x => x.Name, nameof(Doctor.Speciality));
+        var query = _context.Set<Doctor>()
+            .AsNoTracking()
+            .Where(doctor => !doctor.Speciality.Deleted)
+            .AsQueryable();
 
-        // Las entidades del dominio se transforman en DTOs antes de regresar a la capa API.
-        return doctors.Map(d => new DoctorModel.Response(d.Id, d.Name, d.LicenseNumber,
-            new DoctorModel.SpecialityDto(d.Speciality?.Id, d.Speciality?.Name)));
+        if (name is not null)
+        {
+            query = query.Where(doctor => doctor.Name.Contains(name));
+        }
+
+        var total = await query.CountAsync();
+
+        var data = await query
+            .OrderBy(doctor => doctor.Name)
+            .ThenBy(doctor => doctor.Id)
+            .Skip(pageIndex * pageSize)
+            .Take(pageSize)
+            .Select(doctor => new DoctorModel.Response(
+                doctor.Id,
+                doctor.Name,
+                doctor.LicenseNumber,
+                new DoctorModel.SpecialityDto(
+                    doctor.SpecialityId,
+                    doctor.Speciality.Name)))
+            .ToListAsync();
+
+        return new DoctorModel.PagedResponse(pageSize, pageIndex, data, total);
     }
+
+    public async Task<DoctorModel.Response> CreateAsync(DoctorModel.Request request)
+    {
+        var specialityId = ValidateSpecialityId(request.SpecialityId);
+        var speciality = await FindActiveSpecialityAsync(specialityId);
+        var doctor = new Doctor(request.Name!, request.LicenseNumber!, speciality);
+
+        _context.Set<Doctor>().Add(doctor);
+        await _context.SaveChangesAsync();
+
+        return Map(doctor);
+    }
+
+    public async Task UpdateAsync(Guid id, DoctorModel.Request request)
+    {
+        var doctor = await _context.Set<Doctor>()
+            .FirstOrDefaultAsync(candidate => candidate.Id == id)
+            ?? throw new EntityNotFoundException("Médico");
+        var specialityId = ValidateSpecialityId(request.SpecialityId);
+        var speciality = await FindActiveSpecialityAsync(specialityId);
+
+        doctor.Update(request.Name!, request.LicenseNumber!, speciality);
+        await _context.SaveChangesAsync();
+    }
+
+    public async Task DeleteAsync(Guid id)
+    {
+        var doctor = await _context.Set<Doctor>()
+            .FirstOrDefaultAsync(candidate => candidate.Id == id)
+            ?? throw new EntityNotFoundException("Médico");
+
+        doctor.Deactivate();
+        await _context.SaveChangesAsync();
+    }
+
+    private async Task<Speciality> FindActiveSpecialityAsync(Guid specialityId) =>
+        await _context.Set<Speciality>()
+            .FirstOrDefaultAsync(speciality => speciality.Id == specialityId)
+        ?? throw new EntityNotFoundException("Especialidad");
+
+    private static Guid ValidateSpecialityId(Guid? specialityId)
+    {
+        if (specialityId is null || specialityId == Guid.Empty)
+        {
+            throw new ValidationException()
+                .WithDetail(
+                    nameof(DoctorModel.Request.SpecialityId),
+                    "La especialidad es obligatoria.");
+        }
+
+        return specialityId.Value;
+    }
+
+    private static DoctorModel.Response Map(Doctor doctor) =>
+        new(
+            doctor.Id,
+            doctor.Name,
+            doctor.LicenseNumber,
+            new DoctorModel.SpecialityDto(doctor.SpecialityId, doctor.Speciality.Name));
 }
