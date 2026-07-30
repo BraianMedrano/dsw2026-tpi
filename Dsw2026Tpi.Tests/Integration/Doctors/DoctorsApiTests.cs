@@ -15,6 +15,8 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -61,6 +63,7 @@ public class DoctorsApiTests : IClassFixture<DoctorsApiFactory>
         Assert.NotNull(created);
         Assert.Equal("Ana Médica", created.Name);
         Assert.Equal("MP-100", created.LicenseNumber);
+        Assert.NotNull(created.Specialty);
         Assert.Equal(speciality.Id, created.Specialty.Id);
         Assert.Equal(speciality.Name, created.Specialty.Name);
 
@@ -273,6 +276,31 @@ public class DoctorsApiTests : IClassFixture<DoctorsApiFactory>
     }
 
     [Fact]
+    public async Task GetAll_ReturnsLegacyDoctorWithoutSpeciality()
+    {
+        using var client = _factory.CreateAdministratorClient();
+        var id = Guid.NewGuid();
+        var marker = Guid.NewGuid().ToString("N")[..8];
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<Dsw2026TpiDbContext>();
+            var now = DateTime.UtcNow;
+            await context.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO Doctors (Id, Name, LicenseNumber, IsActive, SpecialityId, CreatedAt, UpdatedAt)
+                VALUES ({id}, {$"Médico legado {marker}"}, {"MP-LEGACY"}, {true}, NULL, {now}, {now})
+                """);
+        }
+
+        var page = await GetPage(client, $"?name={marker}");
+
+        Assert.Equal(1, page.Total);
+        var doctor = Assert.Single(page.Data);
+        Assert.Equal(id, doctor.Id);
+        Assert.Null(doctor.Specialty);
+    }
+
+    [Fact]
     public async Task Update_ReplacesNameLicenseAndSpeciality()
     {
         var originalSpeciality = await CreateSpeciality("Especialidad original");
@@ -353,16 +381,16 @@ public class DoctorsApiTests : IClassFixture<DoctorsApiFactory>
         await using var columnsCommand = connection.CreateCommand();
         columnsCommand.CommandText = "PRAGMA table_info('Doctors');";
         await using var columns = await columnsCommand.ExecuteReaderAsync();
-        var specialityIdIsRequired = false;
+        var specialityIdAllowsNull = false;
         while (await columns.ReadAsync())
         {
             if (columns.GetString(1) == "SpecialityId")
             {
-                specialityIdIsRequired = columns.GetInt32(3) == 1;
+                specialityIdAllowsNull = columns.GetInt32(3) == 0;
             }
         }
 
-        Assert.True(specialityIdIsRequired);
+        Assert.True(specialityIdAllowsNull);
 
         await using var foreignKeysCommand = connection.CreateCommand();
         foreignKeysCommand.CommandText = "PRAGMA foreign_key_list('Doctors');";
@@ -379,6 +407,65 @@ public class DoctorsApiTests : IClassFixture<DoctorsApiFactory>
         }
 
         Assert.True(requiredRestrictForeignKey);
+    }
+
+    [Fact]
+    public async Task DomainMigrations_ActivateExistingDoctors()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<Dsw2026TpiDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var context = new Dsw2026TpiDbContext(options);
+        var migrator = context.Database.GetService<IMigrator>();
+        await migrator.MigrateAsync("20260724212022_AddSpecialitySoftDelete");
+
+        var specialityId = Guid.NewGuid();
+        var doctorId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        await context.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO Specialities (Id, Name, Description, Deleted, CreatedAt, UpdatedAt)
+            VALUES ({specialityId}, {"Clínica heredada"}, {"Descripción heredada"}, {false}, {now}, {now});
+            """);
+        await context.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO Doctors (Id, Name, LicenseNumber, IsActive, SpecialityId, CreatedAt, UpdatedAt)
+            VALUES ({doctorId}, {"Médico heredado"}, {"MP-HEREDADO"}, {false}, {specialityId}, {now}, {now});
+            """);
+
+        await migrator.MigrateAsync();
+
+        var isActive = await context.Database
+            .SqlQuery<bool>($"SELECT IsActive AS Value FROM Doctors WHERE Id = {doctorId}")
+            .SingleAsync();
+        Assert.True(isActive);
+    }
+
+    [Fact]
+    public async Task DomainMigrations_PreserveDoctorWithoutSpeciality()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<Dsw2026TpiDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var context = new Dsw2026TpiDbContext(options);
+        var migrator = context.Database.GetService<IMigrator>();
+        await migrator.MigrateAsync("20260724212022_AddSpecialitySoftDelete");
+
+        var doctorId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        await context.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO Doctors (Id, Name, LicenseNumber, IsActive, SpecialityId, CreatedAt, UpdatedAt)
+            VALUES ({doctorId}, {"Médico sin especialidad"}, {"MP-SIN-ESPECIALIDAD"}, {true}, NULL, {now}, {now});
+            """);
+
+        await migrator.MigrateAsync();
+
+        var preserved = await context.Database
+            .SqlQuery<int>($"SELECT COUNT(*) AS Value FROM Doctors WHERE Id = {doctorId} AND SpecialityId IS NULL")
+            .SingleAsync();
+        Assert.Equal(1, preserved);
     }
 
     private async Task<Speciality> CreateSpeciality(string prefix, bool deleted = false)

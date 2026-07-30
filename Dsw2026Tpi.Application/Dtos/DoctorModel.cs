@@ -107,7 +107,8 @@ public record DoctorModel
         }
     }
 
-    public record Response(Guid Id, string Name, string LicenseNumber, SpecialityDto Specialty);
+    // Los registros anteriores pueden no tener especialidad, pero las altas y modificaciones siguen exigiéndola.
+    public record Response(Guid Id, string Name, string LicenseNumber, SpecialityDto? Specialty);
     public record SpecialityDto(Guid Id, string Name);
     public record PagedResponse(int PageSize, int PageIndex, List<Response> Data, int Total);
 }

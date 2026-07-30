@@ -23,7 +23,9 @@ public class DoctorService : IDoctorService
     {
         var query = _context.Set<Doctor>()
             .AsNoTracking()
-            .Where(doctor => !doctor.Speciality.Deleted)
+            .Where(doctor =>
+                doctor.SpecialityId == null ||
+                !doctor.Speciality!.Deleted)
             .AsQueryable();
 
         if (name is not null)
@@ -42,9 +44,11 @@ public class DoctorService : IDoctorService
                 doctor.Id,
                 doctor.Name,
                 doctor.LicenseNumber,
-                new DoctorModel.SpecialityDto(
-                    doctor.SpecialityId,
-                    doctor.Speciality.Name)))
+                doctor.SpecialityId == null
+                    ? null
+                    : new DoctorModel.SpecialityDto(
+                        doctor.SpecialityId.Value,
+                        doctor.Speciality!.Name)))
             .ToListAsync();
 
         return new DoctorModel.PagedResponse(pageSize, pageIndex, data, total);
@@ -107,5 +111,9 @@ public class DoctorService : IDoctorService
             doctor.Id,
             doctor.Name,
             doctor.LicenseNumber,
-            new DoctorModel.SpecialityDto(doctor.SpecialityId, doctor.Speciality.Name));
+            doctor.SpecialityId == null
+                ? null
+                : new DoctorModel.SpecialityDto(
+                    doctor.SpecialityId.Value,
+                    doctor.Speciality!.Name));
 }

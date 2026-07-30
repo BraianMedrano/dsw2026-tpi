@@ -16,14 +16,11 @@ public class DoctorConfiguration : IEntityTypeConfiguration<Doctor>
             .IsRequired();
         builder.Property(doctor => doctor.IsActive)
             .IsRequired();
-        builder.Property(doctor => doctor.SpecialityId)
-            .IsRequired();
 
         builder.HasOne(doctor => doctor.Speciality)
             .WithMany()
             .HasForeignKey(doctor => doctor.SpecialityId)
-            .OnDelete(DeleteBehavior.Restrict)
-            .IsRequired();
+            .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasQueryFilter(doctor => doctor.IsActive);
     }
