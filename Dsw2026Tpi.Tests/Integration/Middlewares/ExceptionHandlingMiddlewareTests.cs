@@ -66,7 +66,8 @@ public class ExceptionHandlingMiddlewareTests
             { new EntityNotFoundException("Doctor"), StatusCodes.Status404NotFound },
             { new ConflictException("RESOURCE_CONFLICT", "The resource already exists."), StatusCodes.Status409Conflict },
             { new AuthenticationException(), StatusCodes.Status401Unauthorized },
-            { new AuthorizationException(), StatusCodes.Status403Forbidden }
+            { new AuthorizationException(), StatusCodes.Status403Forbidden },
+            { new ServiceUnavailableException("DEPENDENCY_UNAVAILABLE", "Dependency unavailable."), StatusCodes.Status503ServiceUnavailable }
         };
 
     [Fact]

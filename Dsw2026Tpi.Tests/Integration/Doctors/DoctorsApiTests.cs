@@ -530,6 +530,7 @@ public sealed class DoctorsApiFactory : WebApplicationFactory<Program>
     private const string AuthenticationScheme = "DoctorsTest";
     private readonly SqliteConnection _connection = new("Data Source=:memory:");
     private readonly SqliteConnection _identityConnection = new("Data Source=:memory:");
+    public static DateTimeOffset AvailabilityNow { get; } = new(2026, 8, 10, 10, 15, 0, TimeSpan.Zero);
 
     public DoctorsApiFactory()
     {
@@ -581,6 +582,9 @@ public sealed class DoctorsApiFactory : WebApplicationFactory<Program>
         });
         builder.ConfigureTestServices(services =>
         {
+            services.RemoveAll<TimeProvider>();
+            services.AddSingleton<TimeProvider>(new FixedTimeProvider(AvailabilityNow));
+
             services.RemoveAll<Dsw2026TpiDbContext>();
             services.RemoveAll<DbContextOptions<Dsw2026TpiDbContext>>();
             services.AddSingleton(_connection);
@@ -619,6 +623,12 @@ public sealed class DoctorsApiFactory : WebApplicationFactory<Program>
             _connection.Dispose();
             _identityConnection.Dispose();
         }
+    }
+
+    private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public override TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
+        public override DateTimeOffset GetUtcNow() => now;
     }
 }
 

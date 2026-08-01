@@ -43,6 +43,7 @@ public class ExceptionHandlingMiddleware
             AuthenticationException => HttpStatusCode.Unauthorized,
             AuthorizationException => HttpStatusCode.Forbidden,
             ConflictException => HttpStatusCode.Conflict,
+            ServiceUnavailableException => HttpStatusCode.ServiceUnavailable,
             _ => HttpStatusCode.InternalServerError,
         };
         context.Response.StatusCode = (int)status;
