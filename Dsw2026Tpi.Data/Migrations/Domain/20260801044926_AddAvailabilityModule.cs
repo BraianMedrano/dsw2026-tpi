@@ -43,7 +43,8 @@ namespace Dsw2026Tpi.Data.Migrations.Domain
                 {
                     Id = table.Column<Guid>(type: "TEXT", nullable: false),
                     AvailabilityRuleId = table.Column<Guid>(type: "TEXT", nullable: false),
-                    Date = table.Column<DateOnly>(type: "TEXT", nullable: false),
+                    DoctorId = table.Column<Guid>(type: "TEXT", nullable: false),
+                    SlotDate = table.Column<DateOnly>(type: "TEXT", nullable: false),
                     StartTime = table.Column<TimeOnly>(type: "TEXT", nullable: false),
                     EndTime = table.Column<TimeOnly>(type: "TEXT", nullable: false),
                     Status = table.Column<string>(type: "TEXT", maxLength: 20, nullable: false, defaultValue: "AVAILABLE"),
@@ -63,9 +64,16 @@ namespace Dsw2026Tpi.Data.Migrations.Domain
                 });
 
             migrationBuilder.CreateIndex(
-                name: "IX_AVAILABILITY_RULES_DoctorId",
+                name: "IX_AVAILABILITY_RULES_DoctorId_Year_Month_DayOfWeek",
                 table: "AVAILABILITY_RULES",
-                column: "DoctorId");
+                columns: new[] { "DoctorId", "Year", "Month", "DayOfWeek" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_AVAILABILITY_SLOTS_DoctorId_SlotDate_StartTime",
+                table: "AVAILABILITY_SLOTS",
+                columns: new[] { "DoctorId", "SlotDate", "StartTime" },
+                unique: true);
 
             migrationBuilder.CreateIndex(
                 name: "IX_AVAILABILITY_SLOTS_AvailabilityRuleId",

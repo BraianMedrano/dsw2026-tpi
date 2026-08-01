@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 
 namespace Dsw2026Tpi.Domain.Entities
 {
@@ -6,7 +6,8 @@ namespace Dsw2026Tpi.Domain.Entities
     {
         public Guid Id { get; set; } = Guid.NewGuid();
         public Guid AvailabilityRuleId { get; set; }
-        public DateOnly Date { get; set; } 
+        public Guid DoctorId { get; set; }
+        public DateOnly SlotDate { get; set; }
         public TimeOnly StartTime { get; set; }
         public TimeOnly EndTime { get; set; }
         public string Status { get; set; } = "AVAILABLE";

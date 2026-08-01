@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using Dsw2026Tpi.Application.Dtos;
 using Dsw2026Tpi.Application.Interfaces;
+using Dsw2026Tpi.CrossCutting.Identity;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -10,7 +11,6 @@ namespace Dsw2026Tpi.Api.Controllers
 {
     [ApiController]
     [Route("api")]
-    [Authorize] 
     public class AvailabilitiesController : ControllerBase
     {
         private readonly IAvailabilityService _availabilityService;
@@ -22,66 +22,29 @@ namespace Dsw2026Tpi.Api.Controllers
 
       
         [HttpGet("doctors/{id}/availabilities")]
-        [Authorize(Roles = "ADMINISTRADOR")] 
+        [Authorize(Policy = Policies.AdminPolicy)]
         public async Task<ActionResult<List<DoctorAvailabilityResponseDto>>> GetDoctorAvailability(Guid id)
         {
-            try
-            {
-                var result = await _availabilityService.GetDoctorAvailabilityAsync(id);
-                return Ok(result);
-            }
-            catch (KeyNotFoundException ex)
-            {
-                return NotFound(new { message = ex.Message });
-            }
+            var result = await _availabilityService.GetDoctorAvailabilityAsync(id);
+            return Ok(result);
         }
 
       
         [HttpPost("availabilities")]
-        [Authorize(Roles = "ADMINISTRADOR")]
-        public async Task<IActionResult> CreateAvailability([FromBody] AvailabilityRequestDto request)
+        [Authorize(Policy = Policies.AdminPolicy)]
+        public async Task<ActionResult<List<DoctorAvailabilityResponseDto>>> CreateAvailability([FromBody] AvailabilityRequestDto request)
         {
-            try
-            {
-                await _availabilityService.CreateAvailabilityAsync(request);
-                return StatusCode(201);
-            }
-            catch (KeyNotFoundException ex)
-            {
-                return NotFound(new { message = ex.Message });
-            }
-            catch (ArgumentException ex)
-            {
-                return BadRequest(new { message = ex.Message });
-            }
-            catch (InvalidOperationException ex)
-            {
-                return BadRequest(new { message = ex.Message });
-            }
+            var result = await _availabilityService.CreateAvailabilityAsync(request);
+            return StatusCode(StatusCodes.Status201Created, result);
         }
 
        
         [HttpPut("availabilities")]
-        [Authorize(Roles = "ADMINISTRADOR")]
-        public async Task<IActionResult> UpdateAvailability([FromBody] AvailabilityRequestDto request)
+        [Authorize(Policy = Policies.AdminPolicy)]
+        public async Task<ActionResult<List<DoctorAvailabilityResponseDto>>> UpdateAvailability([FromBody] AvailabilityRequestDto request)
         {
-            try
-            {
-                await _availabilityService.UpdateAvailabilityAsync(request);
-                return NoContent();
-            }
-            catch (KeyNotFoundException ex)
-            {
-                return NotFound(new { message = ex.Message });
-            }
-            catch (ArgumentException ex)
-            {
-                return BadRequest(new { message = ex.Message });
-            }
-            catch (InvalidOperationException ex)
-            {
-                return BadRequest(new { message = ex.Message });
-            }
+            var result = await _availabilityService.UpdateAvailabilityAsync(request);
+            return Ok(result);
         }
     }
 }

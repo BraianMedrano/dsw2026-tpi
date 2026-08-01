@@ -20,6 +20,7 @@ namespace Dsw2026Tpi.Application.Dtos
     
     public class DoctorAvailabilityResponseDto
     {
+        public Guid Id { get; set; }
         public string Day { get; set; } = string.Empty;
         public string StartTime { get; set; } = string.Empty;
         public string EndTime { get; set; } = string.Empty;

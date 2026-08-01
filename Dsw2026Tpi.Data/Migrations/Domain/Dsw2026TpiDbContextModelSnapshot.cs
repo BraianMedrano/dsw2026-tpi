@@ -56,7 +56,8 @@ namespace Dsw2026Tpi.Data.Migrations.Domain
 
                     b.HasKey("Id");
 
-                    b.HasIndex("DoctorId");
+                    b.HasIndex("DoctorId", "Year", "Month", "DayOfWeek")
+                        .IsUnique();
 
                     b.ToTable("AVAILABILITY_RULES", (string)null);
                 });
@@ -73,15 +74,18 @@ namespace Dsw2026Tpi.Data.Migrations.Domain
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
-                    b.Property<DateOnly>("Date")
-                        .HasColumnType("TEXT");
-
                     b.Property<bool>("Deleted")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER")
                         .HasDefaultValue(false);
 
+                    b.Property<Guid>("DoctorId")
+                        .HasColumnType("TEXT");
+
                     b.Property<TimeOnly>("EndTime")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateOnly>("SlotDate")
                         .HasColumnType("TEXT");
 
                     b.Property<TimeOnly>("StartTime")
@@ -100,6 +104,9 @@ namespace Dsw2026Tpi.Data.Migrations.Domain
                     b.HasKey("Id");
 
                     b.HasIndex("AvailabilityRuleId");
+
+                    b.HasIndex("DoctorId", "SlotDate", "StartTime")
+                        .IsUnique();
 
                     b.ToTable("AVAILABILITY_SLOTS", (string)null);
                 });

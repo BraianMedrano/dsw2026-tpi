@@ -1,4 +1,4 @@
-﻿using Dsw2026Tpi.Domain.Entities;
+using Dsw2026Tpi.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -33,6 +33,11 @@ namespace Dsw2026Tpi.Data.Configurations
 
             builder.Property(e => e.Deleted)
                 .HasDefaultValue(false);
+
+            // El TPI modela un único rango por médico, mes y día de semana; no se guardan turnos partidos.
+            // El servicio valida el caso amigablemente y este índice único protege la regla ante solicitudes concurrentes.
+            builder.HasIndex(e => new { e.DoctorId, e.Year, e.Month, e.DayOfWeek })
+                .IsUnique();
 
            
             builder.HasOne(e => e.Doctor)

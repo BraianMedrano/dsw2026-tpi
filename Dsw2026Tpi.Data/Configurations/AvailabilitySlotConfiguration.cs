@@ -1,4 +1,4 @@
-﻿using Dsw2026Tpi.Domain.Entities;
+using Dsw2026Tpi.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -15,7 +15,10 @@ namespace Dsw2026Tpi.Data.Configurations
             builder.Property(e => e.AvailabilityRuleId)
                 .IsRequired();
 
-            builder.Property(e => e.Date)
+            builder.Property(e => e.DoctorId)
+                .IsRequired();
+
+            builder.Property(e => e.SlotDate)
                 .IsRequired();
 
             builder.Property(e => e.StartTime)
@@ -31,6 +34,13 @@ namespace Dsw2026Tpi.Data.Configurations
 
             builder.Property(e => e.Deleted)
                 .HasDefaultValue(false);
+
+            // Este índice evita duplicar el mismo slot por médico, fecha y hora.
+            // No impone su duración: el servicio valida que los rangos se alineen y duren en bloques de 30 minutos.
+            builder.HasIndex(e => new { e.DoctorId, e.SlotDate, e.StartTime })
+                .IsUnique();
+
+            builder.HasIndex(e => e.AvailabilityRuleId);
 
            
             builder.HasOne(e => e.AvailabilityRule)
