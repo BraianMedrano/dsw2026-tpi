@@ -13,6 +13,7 @@ public class Dsw2026TpiDbContext: DbContext
     }
     public DbSet<AvailabilityRule> AvailabilityRules { get; set; } = null!;
     public DbSet<AvailabilitySlot> AvailabilitySlots { get; set; } = null!;
+    public DbSet<Appointment> Appointments { get; set; } = null!;
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
