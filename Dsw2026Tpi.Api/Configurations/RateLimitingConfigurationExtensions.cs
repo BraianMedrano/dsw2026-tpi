@@ -27,6 +27,8 @@ public sealed class ApiRateLimitingOptions
     public int WindowSeconds { get; init; }
 
     [Range(0, 0)]
+    // El rango 0..0 es intencional: la consigna exige rechazar inmediatamente la solicitud excedida.
+    // Si se permitiera una cola, algunas solicitudes esperarían un permiso en vez de recibir HTTP 429.
     public int QueueLimit { get; init; }
 }
 
@@ -41,6 +43,8 @@ public static class RateLimitingConfigurationExtensions
         IConfiguration configuration)
     {
         var section = configuration.GetRequiredSection(ApiRateLimitingOptions.SectionName);
+
+        // Valida la configuración al arrancar para no descubrir límites inválidos con la API en uso.
         services.AddOptions<ApiRateLimitingOptions>()
             .Bind(section)
             .ValidateDataAnnotations()
@@ -52,6 +56,9 @@ public static class RateLimitingConfigurationExtensions
         {
             var settings = configuredSettings.Value;
             options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+            // Un único selector hace que cada request consuma sólo su política específica o la general,
+            // en vez de consumir dos buckets superpuestos.
             options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
             {
                 var selection = SelectPartition(context, settings);
@@ -59,6 +66,7 @@ public static class RateLimitingConfigurationExtensions
                     selection.Key,
                     _ => new FixedWindowRateLimiterOptions
                     {
+                        // La ventana fija reinicia automáticamente el contador cada WindowSeconds.
                         PermitLimit = selection.PermitLimit,
                         Window = TimeSpan.FromSeconds(settings.WindowSeconds),
                         QueueLimit = settings.QueueLimit,
@@ -92,7 +100,7 @@ public static class RateLimitingConfigurationExtensions
     {
         var path = (context.Request.Path.Value ?? string.Empty).TrimEnd('/');
 
-        // Cada request consume un solo bucket: las rutas sensibles reemplazan al límite general.
+        // Los prefijos impiden que la misma IP comparta contadores entre políticas diferentes.
         if (HttpMethods.IsPost(context.Request.Method) &&
             path.Equals(AdminLoginPath, StringComparison.OrdinalIgnoreCase))
         {
@@ -108,6 +116,8 @@ public static class RateLimitingConfigurationExtensions
         if (HttpMethods.IsPost(context.Request.Method) &&
             path.Equals(AppointmentsPath, StringComparison.OrdinalIgnoreCase))
         {
+            // La reserva se limita por paciente autenticado, no por IP: varios pacientes pueden
+            // compartir una red sin castigarse entre sí, y cambiar de IP no reinicia el bucket del paciente.
             return ($"appointment:{UserOrIp(context)}", settings.AppointmentCreationPermitLimit);
         }
 
@@ -119,11 +129,16 @@ public static class RateLimitingConfigurationExtensions
         var name = context.User.Identity?.IsAuthenticated == true
             ? context.User.Identity.Name
             : null;
+
+        // Normalizar Identity.Name evita buckets distintos para la misma identidad lógica.
         return !string.IsNullOrWhiteSpace(name)
             ? $"user:{name.Trim().ToUpperInvariant()}"
             : $"ip:{ClientIp(context)}";
     }
 
+    // Se usa RemoteIpAddress provisto por la conexión. No se confía directamente en X-Forwarded-For
+    // porque cualquier cliente podría falsificarlo; detrás de un proxy deberán configurarse proxies
+    // confiables mediante ForwardedHeaders antes de aceptar ese encabezado.
     private static string ClientIp(HttpContext context) =>
         context.Connection.RemoteIpAddress?.ToString()
         ?? "unknown-remote-address";
