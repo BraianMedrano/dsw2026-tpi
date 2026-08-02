@@ -73,6 +73,20 @@ public class AvailabilityService(Dsw2026TpiDbContext context, TimeProvider timeP
             var previous = await CurrentRulesQuery(request.DoctorId, now)
                 .Include(rule => rule.Slots)
                 .ToListAsync();
+
+            var previousSlotIds = previous
+                .SelectMany(rule => rule.Slots)
+                .Select(slot => slot.Id)
+                .ToList();
+            // Las citas forman parte del historial, por eso una reconfiguración no puede borrar sus slots asociados.
+            if (previousSlotIds.Count > 0 &&
+                await _context.Appointments.AnyAsync(appointment =>
+                    previousSlotIds.Contains(appointment.AvailabilitySlotId)))
+            {
+                throw new ConflictException(
+                    "AVAILABILITY_HAS_APPOINTMENTS",
+                    "No se puede reemplazar la disponibilidad porque contiene slots asociados a citas.");
+            }
             _context.AvailabilityRules.RemoveRange(previous);
 
             var replacement = AddRules(request.DoctorId, candidates, now, holidays);
