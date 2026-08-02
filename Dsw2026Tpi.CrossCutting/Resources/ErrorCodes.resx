@@ -132,6 +132,9 @@
   <data name="REGISTER_USER_INVALID" xml:space="preserve">
     <value>Datos de registración de usuario no válidos</value>
   </data>
+  <data name="RATE_LIMIT_EXCEEDED" xml:space="preserve">
+    <value>Se excedió el límite de solicitudes. Intente nuevamente más tarde</value>
+  </data>
   <data name="UNHANDLED_ERROR" xml:space="preserve">
     <value>Se produjo un error no controlado</value>
   </data>

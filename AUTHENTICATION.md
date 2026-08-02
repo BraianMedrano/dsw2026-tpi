@@ -70,6 +70,19 @@ La política de autorización de respaldo exige autenticación para cualquier ot
 - Sin token o con token inválido: `401`.
 - Con token válido pero rol incorrecto: `403`.
 
+## Límites de solicitudes
+
+La API aplica ventanas fijas de un minuto sin cola. Cada solicitud consume un único límite:
+
+| Operación | Límite | Partición |
+|---|---:|---|
+| Login de administrador | 5 por minuto | IP |
+| Login de paciente | 10 por minuto | IP |
+| Crear una cita | 5 por minuto | Paciente autenticado |
+| Resto de los endpoints | 100 por minuto | Usuario autenticado o IP |
+
+Los valores se configuran en `RateLimiting` dentro de `appsettings.json`. Al excederlos, la API responde `429` con el mismo contrato de error usado por el resto de la aplicación y registra el rechazo sin incluir credenciales ni tokens. La IP se toma de la conexión; `X-Forwarded-For` solo debe habilitarse en un despliegue que configure proxies confiables explícitamente.
+
 ## Probar desde Swagger
 
 1. Ejecutar `Dsw2026Tpi.Api` con el perfil HTTPS de Visual Studio.

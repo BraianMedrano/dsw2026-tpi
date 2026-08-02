@@ -104,6 +104,15 @@ namespace Dsw2026Tpi.CrossCutting.Resources {
                 return ResourceManager.GetString("REGISTER_USER_INVALID", resourceCulture);
             }
         }
+
+        /// <summary>
+        ///   Looks up a localized string similar to Se excedió el límite de solicitudes. Intente nuevamente más tarde.
+        /// </summary>
+        public static string RATE_LIMIT_EXCEEDED {
+            get {
+                return ResourceManager.GetString("RATE_LIMIT_EXCEEDED", resourceCulture);
+            }
+        }
         
         /// <summary>
         ///   Looks up a localized string similar to Se produjo un error no controlado.

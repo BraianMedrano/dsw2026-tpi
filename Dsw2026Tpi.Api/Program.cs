@@ -29,6 +29,7 @@ public class Program
             builder.AddSerilogConfiguration();
             builder.Services.AddAppIdentity();
             builder.Services.AddAppAuthentication(builder.Configuration);
+            builder.Services.AddAppRateLimiting(builder.Configuration);
             builder.Services.AddSwaggerConfiguration();
             builder.Services.AddApplicationPersistence(builder.Configuration);
             builder.Services.AddAppCors(builder.Configuration);
@@ -74,6 +75,8 @@ public class Program
 
             app.UseMiddleware<ExceptionHandlingMiddleware>();
             app.UseAuthentication();
+            // El rate limiter se ejecuta después de autenticar para particionar por identidad cuando existe.
+            app.UseRateLimiter();
             app.UseAuthorization();
             app.UseCors();
 
