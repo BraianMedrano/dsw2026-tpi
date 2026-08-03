@@ -113,6 +113,35 @@ public sealed class AppointmentService(
             .ToListAsync();
     }
 
+    public async Task<AppointmentModel.PagedResponse> GetHistoryForPatientAsync(
+        string dni,
+        string patientEmail,
+        int pageIndex,
+        int pageSize)
+    {
+        ValidateDni(dni);
+        ValidatePagination(pageIndex, pageSize);
+        await EnsurePatientOwnershipAsync(dni, patientEmail);
+
+        var query = AppointmentsQuery()
+            .Where(appointment =>
+                appointment.PatientDni == dni &&
+                (appointment.Status == AppointmentStatus.CANCELLED ||
+                 appointment.Status == AppointmentStatus.ATTENDED ||
+                 appointment.Status == AppointmentStatus.NO_SHOW));
+
+        var total = await query.CountAsync();
+        var data = await Project(query
+                .OrderByDescending(appointment => appointment.AvailabilitySlot.SlotDate)
+                .ThenByDescending(appointment => appointment.AvailabilitySlot.StartTime)
+                .ThenByDescending(appointment => appointment.Id)
+                .Skip(pageIndex * pageSize)
+                .Take(pageSize))
+            .ToListAsync();
+
+        return new AppointmentModel.PagedResponse(pageIndex, pageSize, total, data);
+    }
+
     public async Task CancelAsync(Guid id, string patientEmail)
     {
         var appointment = await _context.Appointments
@@ -199,6 +228,14 @@ public sealed class AppointmentService(
             .Take(pageSize))
             .ToListAsync();
         return new AppointmentModel.PagedResponse(pageIndex, pageSize, total, data);
+    }
+
+    private static void ValidatePagination(int pageIndex, int pageSize)
+    {
+        if (pageIndex is < 0 or > AppointmentModel.MaxPageIndex)
+            throw Invalid("pageIndex", "El índice de página debe estar entre 0 y 1000000.");
+        if (pageSize is < AppointmentModel.MinPageSize or > AppointmentModel.MaxPageSize)
+            throw Invalid("pageSize", "El tamaño de página debe estar entre 1 y 100.");
     }
 
     private IQueryable<Appointment> AppointmentsQuery() =>

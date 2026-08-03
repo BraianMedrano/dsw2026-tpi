@@ -4,6 +4,21 @@ namespace Dsw2026Tpi.Application.Dtos;
 
 public static class AppointmentModel
 {
+    public const int MaxPageIndex = 1_000_000;
+    public const int MinPageSize = 1;
+    public const int MaxPageSize = 100;
+
+    public sealed record HistoryQuery(
+        [Required(ErrorMessage = "El DNI es obligatorio.")]
+        [RegularExpression(@"^[0-9]{7,8}$", ErrorMessage = "El DNI debe contener 7 u 8 dígitos.")]
+        string Dni = "",
+
+        [Range(0, MaxPageIndex, ErrorMessage = "El índice de página debe estar entre 0 y 1000000.")]
+        int PageIndex = 0,
+
+        [Range(MinPageSize, MaxPageSize, ErrorMessage = "El tamaño de página debe estar entre 1 y 100.")]
+        int PageSize = 10);
+
     public sealed class Request
     {
         // Aunque los ejemplos de query params de la consigna v1.5 dicen "number", el dominio ya identifica
