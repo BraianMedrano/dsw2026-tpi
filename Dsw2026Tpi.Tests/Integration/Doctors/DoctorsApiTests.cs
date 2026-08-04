@@ -72,7 +72,7 @@ public class DoctorsApiTests : IClassFixture<DoctorsApiFactory>
         var persisted = await context.Set<Doctor>()
             .Include(doctor => doctor.Speciality)
             .SingleAsync(doctor => doctor.Id == created.Id);
-        Assert.True(persisted.IsActive);
+        Assert.False(persisted.Deleted);
         Assert.Equal("Ana Médica", persisted.Name);
         Assert.Equal("MP-100", persisted.LicenseNumber);
         Assert.Equal(speciality.Id, persisted.SpecialityId);
@@ -287,8 +287,8 @@ public class DoctorsApiTests : IClassFixture<DoctorsApiFactory>
             var context = scope.ServiceProvider.GetRequiredService<Dsw2026TpiDbContext>();
             var now = DateTime.UtcNow;
             await context.Database.ExecuteSqlInterpolatedAsync($"""
-                INSERT INTO Doctors (Id, Name, LicenseNumber, IsActive, SpecialityId, CreatedAt, UpdatedAt)
-                VALUES ({id}, {$"Médico legado {marker}"}, {"MP-LEGACY"}, {true}, NULL, {now}, {now})
+                INSERT INTO Doctors (Id, Name, LicenseNumber, Deleted, SpecialityId, CreatedAt, UpdatedAt)
+                VALUES ({id}, {$"Médico legado {marker}"}, {"MP-LEGACY"}, {false}, NULL, {now}, {now})
                 """);
         }
 
@@ -312,7 +312,14 @@ public class DoctorsApiTests : IClassFixture<DoctorsApiFactory>
             $"/api/doctors/{created.Id}",
             new DoctorModel.Request("  Nombre actualizado  ", "  MP-NUEVA  ", replacementSpeciality.Id));
 
-        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var responseBody = await response.Content.ReadFromJsonAsync<DoctorModel.Response>();
+        Assert.NotNull(responseBody);
+        Assert.Equal(created.Id, responseBody.Id);
+        Assert.Equal("Nombre actualizado", responseBody.Name);
+        Assert.Equal("MP-NUEVA", responseBody.LicenseNumber);
+        Assert.NotNull(responseBody.Specialty);
+        Assert.Equal(replacementSpeciality.Id, responseBody.Specialty.Id);
         using var scope = _factory.Services.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<Dsw2026TpiDbContext>();
         var updated = await context.Set<Doctor>()
@@ -321,7 +328,7 @@ public class DoctorsApiTests : IClassFixture<DoctorsApiFactory>
         Assert.Equal("Nombre actualizado", updated.Name);
         Assert.Equal("MP-NUEVA", updated.LicenseNumber);
         Assert.Equal(replacementSpeciality.Id, updated.SpecialityId);
-        Assert.True(updated.IsActive);
+        Assert.False(updated.Deleted);
     }
 
     [Fact]
@@ -338,7 +345,7 @@ public class DoctorsApiTests : IClassFixture<DoctorsApiFactory>
     }
 
     [Fact]
-    public async Task Delete_DeactivatesPersistsAndExcludesDoctor()
+    public async Task Delete_MarksAsDeletedPersistsAndExcludesDoctor()
     {
         var speciality = await CreateSpeciality("Especialidad para baja");
         using var client = _factory.CreateAdministratorClient();
@@ -352,7 +359,8 @@ public class DoctorsApiTests : IClassFixture<DoctorsApiFactory>
             $"/api/doctors/{created.Id}",
             new DoctorModel.Request("Nombre posterior", "MP-POST", speciality.Id));
 
-        Assert.Equal(HttpStatusCode.NoContent, deleteResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, deleteResponse.StatusCode);
+        Assert.Equal("ok", await deleteResponse.Content.ReadAsStringAsync());
         Assert.Equal(0, page.Total);
         Assert.Empty(page.Data);
         await AssertNotFound(repeatedDelete, "Médico");
@@ -363,7 +371,7 @@ public class DoctorsApiTests : IClassFixture<DoctorsApiFactory>
         var persisted = await context.Set<Doctor>()
             .IgnoreQueryFilters()
             .SingleAsync(doctor => doctor.Id == created.Id);
-        Assert.False(persisted.IsActive);
+        Assert.True(persisted.Deleted);
     }
 
     [Fact]
@@ -382,15 +390,28 @@ public class DoctorsApiTests : IClassFixture<DoctorsApiFactory>
         columnsCommand.CommandText = "PRAGMA table_info('Doctors');";
         await using var columns = await columnsCommand.ExecuteReaderAsync();
         var specialityIdAllowsNull = false;
+        var hasDeletedColumn = false;
+        var hasIsActiveColumn = false;
         while (await columns.ReadAsync())
         {
-            if (columns.GetString(1) == "SpecialityId")
+            var columnName = columns.GetString(1);
+            if (columnName == "SpecialityId")
             {
                 specialityIdAllowsNull = columns.GetInt32(3) == 0;
+            }
+            else if (columnName == "Deleted")
+            {
+                hasDeletedColumn = true;
+            }
+            else if (columnName == "IsActive")
+            {
+                hasIsActiveColumn = true;
             }
         }
 
         Assert.True(specialityIdAllowsNull);
+        Assert.True(hasDeletedColumn);
+        Assert.False(hasIsActiveColumn);
 
         await using var foreignKeysCommand = connection.CreateCommand();
         foreignKeysCommand.CommandText = "PRAGMA foreign_key_list('Doctors');";
@@ -410,7 +431,7 @@ public class DoctorsApiTests : IClassFixture<DoctorsApiFactory>
     }
 
     [Fact]
-    public async Task DomainMigrations_ActivateExistingDoctors()
+    public async Task DoctorSoftDeleteMigration_InvertsExistingActiveAndInactiveValues()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync();
@@ -419,10 +440,11 @@ public class DoctorsApiTests : IClassFixture<DoctorsApiFactory>
             .Options;
         await using var context = new Dsw2026TpiDbContext(options);
         var migrator = context.Database.GetService<IMigrator>();
-        await migrator.MigrateAsync("20260724212022_AddSpecialitySoftDelete");
+        await migrator.MigrateAsync("20260801201618_AddAppointmentsModule");
 
         var specialityId = Guid.NewGuid();
-        var doctorId = Guid.NewGuid();
+        var activeDoctorId = Guid.NewGuid();
+        var inactiveDoctorId = Guid.NewGuid();
         var now = DateTime.UtcNow;
         await context.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO Specialities (Id, Name, Description, Deleted, CreatedAt, UpdatedAt)
@@ -430,15 +452,23 @@ public class DoctorsApiTests : IClassFixture<DoctorsApiFactory>
             """);
         await context.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO Doctors (Id, Name, LicenseNumber, IsActive, SpecialityId, CreatedAt, UpdatedAt)
-            VALUES ({doctorId}, {"Médico heredado"}, {"MP-HEREDADO"}, {false}, {specialityId}, {now}, {now});
+            VALUES ({activeDoctorId}, {"Médico activo"}, {"MP-ACTIVO"}, {true}, {specialityId}, {now}, {now});
+            """);
+        await context.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO Doctors (Id, Name, LicenseNumber, IsActive, SpecialityId, CreatedAt, UpdatedAt)
+            VALUES ({inactiveDoctorId}, {"Médico inactivo"}, {"MP-INACTIVO"}, {false}, {specialityId}, {now}, {now});
             """);
 
         await migrator.MigrateAsync();
 
-        var isActive = await context.Database
-            .SqlQuery<bool>($"SELECT IsActive AS Value FROM Doctors WHERE Id = {doctorId}")
+        var activeDoctorDeleted = await context.Database
+            .SqlQuery<bool>($"SELECT Deleted AS Value FROM Doctors WHERE Id = {activeDoctorId}")
             .SingleAsync();
-        Assert.True(isActive);
+        var inactiveDoctorDeleted = await context.Database
+            .SqlQuery<bool>($"SELECT Deleted AS Value FROM Doctors WHERE Id = {inactiveDoctorId}")
+            .SingleAsync();
+        Assert.False(activeDoctorDeleted);
+        Assert.True(inactiveDoctorDeleted);
     }
 
     [Fact]

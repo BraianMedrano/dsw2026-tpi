@@ -66,7 +66,7 @@ public class DoctorService : IDoctorService
         return Map(doctor);
     }
 
-    public async Task UpdateAsync(Guid id, DoctorModel.Request request)
+    public async Task<DoctorModel.Response> UpdateAsync(Guid id, DoctorModel.Request request)
     {
         var doctor = await _context.Set<Doctor>()
             .FirstOrDefaultAsync(candidate => candidate.Id == id)
@@ -76,6 +76,8 @@ public class DoctorService : IDoctorService
 
         doctor.Update(request.Name!, request.LicenseNumber!, speciality);
         await _context.SaveChangesAsync();
+
+        return Map(doctor);
     }
 
     public async Task DeleteAsync(Guid id)
@@ -84,7 +86,7 @@ public class DoctorService : IDoctorService
             .FirstOrDefaultAsync(candidate => candidate.Id == id)
             ?? throw new EntityNotFoundException("Médico");
 
-        doctor.Deactivate();
+        doctor.MarkAsDeleted();
         await _context.SaveChangesAsync();
     }
 

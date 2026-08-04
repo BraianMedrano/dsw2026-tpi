@@ -105,6 +105,7 @@ public sealed class AdministratorLoginTests : IAsyncLifetime
         Assert.Equal(
             Roles.Administrator,
             token.Claims.Single(claim => claim.Type == ClaimTypes.Role).Value);
+        Assert.True(Guid.TryParse(token.Id, out _));
         Assert.InRange(
             token.ValidTo,
             beforeLogin.AddMinutes(TokenLifetimeMinutes).AddSeconds(-5),

@@ -61,7 +61,7 @@ public class SpecialtyService : ISpecialtyService
         return new SpecialtyModel.Response(specialty.Id, specialty.Name, specialty.Description);
     }
 
-    public async Task UpdateAsync(Guid id, SpecialtyModel.Request request)
+    public async Task<SpecialtyModel.Response> UpdateAsync(Guid id, SpecialtyModel.Request request)
     {
         var specialty = await _context.Set<Speciality>()
             .FirstOrDefaultAsync(s => s.Id == id)
@@ -74,6 +74,8 @@ public class SpecialtyService : ISpecialtyService
         });
 
         await _context.SaveChangesAsync();
+
+        return new SpecialtyModel.Response(specialty.Id, specialty.Name, specialty.Description);
     }
 
     public async Task DeleteAsync(Guid id)

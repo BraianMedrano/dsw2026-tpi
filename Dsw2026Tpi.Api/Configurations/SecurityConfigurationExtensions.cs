@@ -1,5 +1,6 @@
 ﻿using Dsw2026Tpi.CrossCutting.Identity;
 using Dsw2026Tpi.CrossCutting.Models;
+using Dsw2026Tpi.Application.Interfaces;
 using Dsw2026Tpi.CrossCutting.Resources;
 using Dsw2026Tpi.Data.Identity;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -44,6 +45,24 @@ public static class SecurityConfigurationExtensions
                 };
                 options.Events = new JwtBearerEvents
                 {
+                    OnTokenValidated = async context =>
+                    {
+                        var jti = context.Principal?.FindFirst("jti")?.Value;
+                        if (string.IsNullOrWhiteSpace(jti))
+                        {
+                            context.Fail("The token does not contain a valid jti claim.");
+                            return;
+                        }
+
+                        var revocationService = context.HttpContext.RequestServices
+                            .GetRequiredService<ITokenRevocationService>();
+                        if (await revocationService.IsRevokedAsync(
+                            jti,
+                            context.HttpContext.RequestAborted))
+                        {
+                            context.Fail("The token has been revoked.");
+                        }
+                    },
                     OnChallenge = async context =>
                     {
                         context.HandleResponse();
