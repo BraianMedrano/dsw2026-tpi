@@ -29,6 +29,18 @@ namespace Dsw2026Tpi.Api.Controllers
             return Ok(result);
         }
 
+        [HttpGet("availability-slots")]
+        [Authorize(Policy = Policies.PatientPolicy)]
+        public async Task<ActionResult<IReadOnlyCollection<AvailabilitySlotModel.Response>>> GetAvailableSlots(
+            [FromQuery] AvailabilitySlotModel.Query query)
+        {
+            var result = await _availabilityService.GetAvailableSlotsAsync(
+                query.SpecialtyId,
+                query.DoctorId,
+                query.Date);
+            return Ok(result);
+        }
+
       
         [HttpPost("availabilities")]
         [Authorize(Policy = Policies.AdminPolicy)]
