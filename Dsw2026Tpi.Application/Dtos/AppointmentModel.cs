@@ -61,4 +61,25 @@ public static class AppointmentModel
         int PageSize,
         int Total,
         IReadOnlyCollection<Response> Data);
+
+    public sealed record AdminPagedResponse(
+        int PageIndex,
+        int PageSize,
+        int Total,
+        IReadOnlyCollection<AdminResponse> Data);
+
+    public sealed record AdminResponse(
+        Guid AppointmentsId,
+        string AppointmentsStatus,
+        AdminPatientResponse Patient,
+        AdminDoctorResponse Doctor);
+
+    public sealed record AdminPatientResponse(long Dni, string FullName);
+
+    public sealed record AdminDoctorResponse(
+        Guid DoctorId,
+        string Name,
+        AdminSpecialtyResponse? Specialty);
+
+    public sealed record AdminSpecialtyResponse(Guid SpecialtyId, string Name);
 }

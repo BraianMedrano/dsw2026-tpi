@@ -65,31 +65,67 @@ public class AvailabilityService(Dsw2026TpiDbContext context, TimeProvider timeP
         await EnsureActiveDoctorAsync(request.DoctorId);
         var holidays = LoadNonWorkingDays();
 
-        // PUT reemplaza el conjunto completo del mes dentro de una transacción; un fallo conserva las reglas anteriores.
+        // PUT reemplaza sólo los slots futuros disponibles dentro de una transacción; un fallo conserva el estado anterior.
         EnsureOneRangePerDay(candidates, []);
         await using var transaction = await _context.Database.BeginTransactionAsync();
         try
         {
-            var previous = await CurrentRulesQuery(request.DoctorId, now)
+            var previous = await _context.AvailabilityRules
+                .Where(rule =>
+                    rule.DoctorId == request.DoctorId &&
+                    rule.Year == now.Year &&
+                    rule.Month == now.Month)
                 .Include(rule => rule.Slots)
                 .ToListAsync();
-
             var previousSlotIds = previous
                 .SelectMany(rule => rule.Slots)
                 .Select(slot => slot.Id)
                 .ToList();
-            // Las citas forman parte del historial, por eso una reconfiguración no puede borrar sus slots asociados.
-            if (previousSlotIds.Count > 0 &&
-                await _context.Appointments.AnyAsync(appointment =>
-                    previousSlotIds.Contains(appointment.AvailabilitySlotId)))
-            {
-                throw new ConflictException(
-                    "AVAILABILITY_HAS_APPOINTMENTS",
-                    "No se puede reemplazar la disponibilidad porque contiene slots asociados a citas.");
-            }
-            _context.AvailabilityRules.RemoveRange(previous);
+            // Una FK desde Appointments obliga a conservar el slot aunque ya no forme parte del nuevo horario.
+            var appointmentSlotIds = previousSlotIds.Count == 0
+                ? []
+                : await _context.Appointments
+                    .Where(appointment => previousSlotIds.Contains(appointment.AvailabilitySlotId))
+                    .Select(appointment => appointment.AvailabilitySlotId)
+                    .Distinct()
+                    .ToListAsync();
+            var protectedSlotIds = appointmentSlotIds.ToHashSet();
+            var requestedByDay = candidates.ToDictionary(candidate => candidate.Day);
+            var replacement = new List<AvailabilityRule>();
 
-            var replacement = AddRules(request.DoctorId, candidates, now, holidays);
+            foreach (var rule in previous)
+            {
+                requestedByDay.TryGetValue(rule.DayOfWeek, out var candidate);
+                RemoveReplaceableSlots(rule, now, protectedSlotIds, candidate, holidays);
+                if (candidate is not null)
+                {
+                    requestedByDay.Remove(rule.DayOfWeek);
+                    rule.StartTime = candidate.Start;
+                    rule.EndTime = candidate.End;
+                    rule.Deleted = false;
+                    rule.UpdatedAt = now;
+                    // Esta foto separa los slots ya persistidos de los que GenerateFutureSlots agregará a la colección.
+                    var preservedSlotIds = rule.Slots.Select(slot => slot.Id).ToHashSet();
+                    GenerateFutureSlots(rule, now, holidays);
+                    // Con una regla ya trackeada, EF interpreta un dependiente con Guid asignado como existente.
+                    // Marcar explícitamente los slots nuevos como Added evita un UPDATE que no encuentra ninguna fila.
+                    _context.AvailabilitySlots.AddRange(
+                        rule.Slots.Where(slot => !preservedSlotIds.Contains(slot.Id)));
+                    replacement.Add(rule);
+                }
+                else if (rule.Slots.Count == 0)
+                {
+                    _context.AvailabilityRules.Remove(rule);
+                }
+                else
+                {
+                    // La regla padre se conserva sólo porque sus slots históricos o reservados mantienen una FK hacia ella.
+                    rule.Deleted = true;
+                    rule.UpdatedAt = now;
+                }
+            }
+
+            replacement.AddRange(AddRules(request.DoctorId, requestedByDay.Values, now, holidays));
             await _context.SaveChangesAsync();
             await transaction.CommitAsync();
             return replacement.Select(ToResponse).ToList();
@@ -105,6 +141,41 @@ public class AvailabilityService(Dsw2026TpiDbContext context, TimeProvider timeP
             throw;
         }
     }
+
+    private void RemoveReplaceableSlots(
+        AvailabilityRule rule,
+        DateTime now,
+        HashSet<Guid> protectedSlotIds,
+        NormalizedDay? replacement,
+        HashSet<DateOnly> holidays)
+    {
+        foreach (var slot in rule.Slots.Where(slot => IsFuture(slot, now)).ToList())
+        {
+            var mustPreserve = slot.Status != "AVAILABLE" || protectedSlotIds.Contains(slot.Id);
+            if (mustPreserve)
+            {
+                // La fila se conserva por la reserva o su historial, pero sólo sigue activa si pertenece al nuevo horario.
+                slot.Deleted = replacement is null || !BelongsTo(slot, replacement, holidays);
+                slot.UpdatedAt = now;
+                continue;
+            }
+
+            rule.Slots.Remove(slot);
+            _context.AvailabilitySlots.Remove(slot);
+        }
+    }
+
+    private static bool IsFuture(AvailabilitySlot slot, DateTime now) =>
+        slot.SlotDate.ToDateTime(slot.StartTime) > now;
+
+    private static bool BelongsTo(
+        AvailabilitySlot slot,
+        NormalizedDay replacement,
+        HashSet<DateOnly> holidays) =>
+        slot.SlotDate.DayOfWeek.ToString() == replacement.Day &&
+        !holidays.Contains(slot.SlotDate) &&
+        slot.StartTime >= replacement.Start &&
+        slot.EndTime <= replacement.End;
 
     private IQueryable<AvailabilityRule> CurrentRulesQuery(Guid doctorId, DateTime now) =>
         _context.AvailabilityRules.Where(rule =>
@@ -178,6 +249,12 @@ public class AvailabilityService(Dsw2026TpiDbContext context, TimeProvider timeP
             for (var start = rule.StartTime; start.AddMinutes(SlotMinutes) <= rule.EndTime; start = start.AddMinutes(SlotMinutes))
             {
                 if (date == today && start <= currentTime) continue;
+                var existing = rule.Slots.FirstOrDefault(slot => slot.SlotDate == date && slot.StartTime == start);
+                if (existing is not null)
+                {
+                    if (existing.Status == "AVAILABLE") existing.Deleted = false;
+                    continue;
+                }
                 rule.Slots.Add(new AvailabilitySlot { DoctorId = rule.DoctorId, SlotDate = date, StartTime = start, EndTime = start.AddMinutes(SlotMinutes), Status = "AVAILABLE" });
             }
         }
