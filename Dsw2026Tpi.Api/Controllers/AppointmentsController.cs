@@ -28,6 +28,18 @@ public sealed class AppointmentsController(IAppointmentService appointmentServic
         return Ok(await _appointmentService.GetActiveForPatientAsync(dni, PatientEmail()));
     }
 
+    [HttpGet("patient/history")]
+    [Authorize(Policy = Policies.PatientPolicy)]
+    public async Task<ActionResult<AppointmentModel.PagedResponse>> GetHistoryForPatient(
+        [FromQuery] AppointmentModel.HistoryQuery query)
+    {
+        return Ok(await _appointmentService.GetHistoryForPatientAsync(
+            query.Dni,
+            PatientEmail(),
+            query.PageIndex,
+            query.PageSize));
+    }
+
     [HttpDelete("{id:guid}")]
     [Authorize(Policy = Policies.PatientPolicy)]
     public async Task<ActionResult<string>> Cancel(Guid id)

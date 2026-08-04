@@ -167,6 +167,254 @@ public sealed class AppointmentsApiTests : IAsyncLifetime
             (await other.DeleteAsync($"/api/appointments/{appointment.Id}")).StatusCode);
     }
 
+    [Fact]
+    public async Task PatientCanReadCancelledAppointmentFromHistory()
+    {
+        var data = await CreateSlotAsync();
+        using var patient = await CreatePatientClientAsync("history-owner@example.com", "13572468");
+        var create = await patient.PostAsJsonAsync(
+            "/api/appointments",
+            Request(data.Doctor.Id, data.Slot.Id, "13572468"));
+        var appointment = (await create.Content.ReadFromJsonAsync<AppointmentModel.Response>())!;
+        Assert.Equal(HttpStatusCode.OK, (await patient.DeleteAsync($"/api/appointments/{appointment.Id}")).StatusCode);
+
+        var response = await patient.GetAsync(
+            "/api/appointments/patient/history?dni=13572468&pageIndex=0&pageSize=10");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var history = (await response.Content.ReadFromJsonAsync<AppointmentModel.PagedResponse>())!;
+        Assert.Equal(1, history.Total);
+        var historicalAppointment = Assert.Single(history.Data);
+        Assert.Equal(appointment.Id, historicalAppointment.Id);
+        Assert.Equal("CANCELLED", historicalAppointment.Status);
+    }
+
+    [Fact]
+    public async Task ActiveAndHistoricalEndpointsKeepBookedAndCancelledAppointmentsSeparate()
+    {
+        using var patient = await CreatePatientClientAsync("history-separation@example.com", "24681357");
+        var booked = await AddAppointmentAsync("24681357", AppointmentStatus.BOOKED);
+        var cancelled = await AddAppointmentAsync("24681357", AppointmentStatus.CANCELLED);
+
+        var active = (await patient.GetFromJsonAsync<List<AppointmentModel.Response>>(
+            "/api/appointments/patient?dni=24681357"))!;
+        var history = (await patient.GetFromJsonAsync<AppointmentModel.PagedResponse>(
+            "/api/appointments/patient/history?dni=24681357"))!;
+
+        Assert.Equal(booked.Id, Assert.Single(active).Id);
+        Assert.Equal(cancelled.Id, Assert.Single(history.Data).Id);
+        Assert.DoesNotContain(history.Data, appointment => appointment.Status == "BOOKED");
+    }
+
+    [Fact]
+    public async Task HistoryIncludesEveryExplicitHistoricalStatusAndSupportsLegacyDoctor()
+    {
+        using var patient = await CreatePatientClientAsync("history-statuses@example.com", "35792468");
+        var cancelled = await AddAppointmentAsync("35792468", AppointmentStatus.CANCELLED);
+        var attended = await AddAppointmentAsync("35792468", AppointmentStatus.ATTENDED);
+        var noShow = await AddAppointmentAsync("35792468", AppointmentStatus.NO_SHOW, legacyDoctor: true);
+        _ = await AddAppointmentAsync("35792468", AppointmentStatus.BOOKED);
+
+        var history = (await patient.GetFromJsonAsync<AppointmentModel.PagedResponse>(
+            "/api/appointments/patient/history?dni=35792468&pageSize=10"))!;
+
+        Assert.Equal(3, history.Total);
+        Assert.Equal(
+            ["ATTENDED", "CANCELLED", "NO_SHOW"],
+            history.Data.Select(appointment => appointment.Status).Order().ToArray());
+        Assert.DoesNotContain(history.Data, appointment => appointment.Status == "BOOKED");
+        var legacy = Assert.Single(history.Data, appointment => appointment.Id == noShow.Id);
+        Assert.Null(legacy.SpecialtyId);
+        Assert.Null(legacy.Specialty);
+        Assert.Contains(history.Data, appointment => appointment.Id == cancelled.Id);
+        Assert.Contains(history.Data, appointment => appointment.Id == attended.Id);
+    }
+
+    [Fact]
+    public async Task HistoryProtectsPatientPrivacyAndPreservesNotFoundBehavior()
+    {
+        using var owner = await CreatePatientClientAsync("history-private-owner@example.com", "46813579");
+        using var other = await CreatePatientClientAsync("history-private-other@example.com", "57924681");
+        var appointment = await AddAppointmentAsync("46813579", AppointmentStatus.CANCELLED);
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var context = scope.ServiceProvider.GetRequiredService<Dsw2026TpiDbContext>();
+        var doctor = (await context.Set<Doctor>().FindAsync(appointment.DoctorId))!;
+
+        var forbidden = await other.GetAsync(
+            "/api/appointments/patient/history?dni=46813579");
+        var notFound = await other.GetAsync(
+            "/api/appointments/patient/history?dni=68035791");
+
+        await AssertErrorContractAsync(forbidden, HttpStatusCode.Forbidden, "AUTHORIZATION_FAILED", false);
+        var forbiddenBody = await forbidden.Content.ReadAsStringAsync();
+        Assert.DoesNotContain(appointment.Id.ToString(), forbiddenBody, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(appointment.Reason, forbiddenBody, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(appointment.DoctorId.ToString(), forbiddenBody, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(doctor.Name, forbiddenBody, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(appointment.AvailabilitySlotId.ToString(), forbiddenBody, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(appointment.PatientDni, forbiddenBody, StringComparison.OrdinalIgnoreCase);
+        await AssertErrorContractAsync(notFound, HttpStatusCode.NotFound, "ENTITY_NOTFOUND", false);
+    }
+
+    [Fact]
+    public async Task HistoryRequiresPatientAuthorization()
+    {
+        using var anonymous = _factory.CreateClient();
+        using var administrator = await CreateAdministratorClientAsync();
+        using var patient = await CreatePatientClientAsync("history-authorized@example.com", "79146825");
+
+        await AssertErrorContractAsync(
+            await anonymous.GetAsync("/api/appointments/patient/history?dni=79146825"),
+            HttpStatusCode.Unauthorized,
+            "AUTHENTICATION_FAILED",
+            false);
+        await AssertErrorContractAsync(
+            await administrator.GetAsync("/api/appointments/patient/history?dni=79146825"),
+            HttpStatusCode.Forbidden,
+            "AUTHORIZATION_FAILED",
+            false);
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await patient.GetAsync("/api/appointments/patient/history?dni=79146825")).StatusCode);
+    }
+
+    [Theory]
+    [InlineData("123456")]
+    [InlineData("123456789")]
+    [InlineData("1234A678")]
+    public async Task HistoryRejectsInvalidDniWithValidationContract(string dni)
+    {
+        using var patient = await CreatePatientClientAsync("history-invalid-dni@example.com", "80257913");
+
+        var response = await patient.GetAsync($"/api/appointments/patient/history?dni={dni}");
+
+        await AssertErrorContractAsync(response, HttpStatusCode.BadRequest, "VALIDATION_ERROR", true);
+    }
+
+    [Theory]
+    [InlineData("١٢٣٤٥٦٧")]
+    [InlineData("١٢٣٤٥٦٧٨")]
+    public async Task HistoryRejectsNonAsciiUnicodeDigits(string dni)
+    {
+        using var patient = await CreatePatientClientAsync("history-unicode-dni@example.com", "80257913");
+
+        var response = await patient.GetAsync(
+            $"/api/appointments/patient/history?dni={Uri.EscapeDataString(dni)}");
+
+        await AssertErrorContractAsync(response, HttpStatusCode.BadRequest, "VALIDATION_ERROR", true);
+    }
+
+    [Fact]
+    public async Task HistoryRequiresDniQueryParameter()
+    {
+        using var patient = await CreatePatientClientAsync("history-missing-dni@example.com", "80357912");
+
+        var response = await patient.GetAsync("/api/appointments/patient/history");
+
+        await AssertErrorContractAsync(response, HttpStatusCode.BadRequest, "VALIDATION_ERROR", true);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(100)]
+    public async Task HistoryAcceptsPageSizeBoundaries(int pageSize)
+    {
+        using var patient = await CreatePatientClientAsync("history-page-size@example.com", "80457912");
+
+        var response = await patient.GetAsync(
+            $"/api/appointments/patient/history?dni=80457912&pageSize={pageSize}");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var history = (await response.Content.ReadFromJsonAsync<AppointmentModel.PagedResponse>())!;
+        Assert.Equal(pageSize, history.PageSize);
+    }
+
+    [Fact]
+    public async Task HistoryAcceptsMaximumPageIndexAndReturnsEmptyData()
+    {
+        using var patient = await CreatePatientClientAsync("history-max-page@example.com", "80557912");
+
+        var response = await patient.GetAsync(
+            "/api/appointments/patient/history?dni=80557912&pageIndex=1000000");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var history = (await response.Content.ReadFromJsonAsync<AppointmentModel.PagedResponse>())!;
+        Assert.Equal(1_000_000, history.PageIndex);
+        Assert.Empty(history.Data);
+    }
+
+    [Theory]
+    [InlineData("pageIndex=-1")]
+    [InlineData("pageIndex=1000001")]
+    [InlineData("pageSize=0")]
+    [InlineData("pageSize=101")]
+    public async Task HistoryRejectsInvalidPagination(string query)
+    {
+        using var patient = await CreatePatientClientAsync("history-invalid-page@example.com", "91368024");
+
+        var response = await patient.GetAsync(
+            $"/api/appointments/patient/history?dni=91368024&{query}");
+
+        await AssertErrorContractAsync(response, HttpStatusCode.BadRequest, "VALIDATION_ERROR", true);
+    }
+
+    [Fact]
+    public async Task HistoryPaginatesAfterCountingAndUsesStableNewestFirstOrder()
+    {
+        using var patient = await CreatePatientClientAsync("history-pages@example.com", "12468035");
+        var oldest = await AddAppointmentAsync(
+            "12468035", AppointmentStatus.CANCELLED, new DateOnly(2026, 8, 7), new TimeOnly(9, 0));
+        var tiedLowerId = await AddAppointmentAsync(
+            "12468035", AppointmentStatus.ATTENDED, new DateOnly(2026, 8, 9), new TimeOnly(11, 0),
+            id: Guid.Parse("00000000-0000-0000-0000-000000000001"));
+        var tiedHigherId = await AddAppointmentAsync(
+            "12468035", AppointmentStatus.NO_SHOW, new DateOnly(2026, 8, 9), new TimeOnly(11, 0),
+            id: Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff"));
+
+        var first = (await patient.GetFromJsonAsync<AppointmentModel.PagedResponse>(
+            "/api/appointments/patient/history?dni=12468035&pageIndex=0&pageSize=2"))!;
+        var second = (await patient.GetFromJsonAsync<AppointmentModel.PagedResponse>(
+            "/api/appointments/patient/history?dni=12468035&pageIndex=1&pageSize=2"))!;
+        var outside = (await patient.GetFromJsonAsync<AppointmentModel.PagedResponse>(
+            "/api/appointments/patient/history?dni=12468035&pageIndex=8&pageSize=2"))!;
+
+        Assert.Equal(3, first.Total);
+        Assert.Equal(3, second.Total);
+        Assert.Equal([tiedHigherId.Id, tiedLowerId.Id], first.Data.Select(item => item.Id).ToArray());
+        Assert.Equal(oldest.Id, Assert.Single(second.Data).Id);
+        Assert.Empty(first.Data.Select(item => item.Id).Intersect(second.Data.Select(item => item.Id)));
+        Assert.Equal(8, outside.PageIndex);
+        Assert.Equal(2, outside.PageSize);
+        Assert.Equal(3, outside.Total);
+        Assert.Empty(outside.Data);
+    }
+
+    [Fact]
+    public async Task RebookingKeepsCancellationInHistoryAndNewBookingActive()
+    {
+        var data = await CreateSlotAsync();
+        using var patient = await CreatePatientClientAsync("history-rebooking@example.com", "23579146");
+        var firstCreate = await patient.PostAsJsonAsync(
+            "/api/appointments",
+            Request(data.Doctor.Id, data.Slot.Id, "23579146"));
+        var cancelled = (await firstCreate.Content.ReadFromJsonAsync<AppointmentModel.Response>())!;
+        Assert.Equal(HttpStatusCode.OK, (await patient.DeleteAsync($"/api/appointments/{cancelled.Id}")).StatusCode);
+        var secondCreate = await patient.PostAsJsonAsync(
+            "/api/appointments",
+            Request(data.Doctor.Id, data.Slot.Id, "23579146"));
+        var rebooked = (await secondCreate.Content.ReadFromJsonAsync<AppointmentModel.Response>())!;
+
+        var history = (await patient.GetFromJsonAsync<AppointmentModel.PagedResponse>(
+            "/api/appointments/patient/history?dni=23579146"))!;
+        var active = (await patient.GetFromJsonAsync<List<AppointmentModel.Response>>(
+            "/api/appointments/patient?dni=23579146"))!;
+
+        Assert.Equal(cancelled.Id, Assert.Single(history.Data).Id);
+        Assert.Equal("CANCELLED", history.Data.Single().Status);
+        Assert.Equal(rebooked.Id, Assert.Single(active).Id);
+        Assert.Equal("BOOKED", active.Single().Status);
+    }
+
     [Theory]
     [InlineData("123456", "Motivo válido")]
     [InlineData("123456789", "Motivo válido")]
@@ -292,6 +540,62 @@ public sealed class AppointmentsApiTests : IAsyncLifetime
         var context = scope.ServiceProvider.GetRequiredService<Dsw2026TpiDbContext>();
         Assert.Equal(expectedAppointmentStatus, (await context.Appointments.FindAsync(appointment.Id))!.Status);
         Assert.Equal(expectedSlotStatus, (await context.AvailabilitySlots.FindAsync(data.Slot.Id))!.Status);
+    }
+
+    private async Task<Appointment> AddAppointmentAsync(
+        string patientDni,
+        AppointmentStatus status,
+        DateOnly? date = null,
+        TimeOnly? startTime = null,
+        bool legacyDoctor = false,
+        Guid? id = null)
+    {
+        var data = await CreateSlotAsync();
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var context = scope.ServiceProvider.GetRequiredService<Dsw2026TpiDbContext>();
+        var slot = await context.AvailabilitySlots.FindAsync(data.Slot.Id);
+        slot!.SlotDate = date ?? data.Slot.SlotDate;
+        slot.StartTime = startTime ?? data.Slot.StartTime;
+        slot.EndTime = slot.StartTime.AddMinutes(30);
+        if (legacyDoctor)
+        {
+            await context.Set<Doctor>()
+                .Where(doctor => doctor.Id == data.Doctor.Id)
+                .ExecuteUpdateAsync(update => update
+                    .SetProperty(doctor => doctor.SpecialityId, (Guid?)null));
+        }
+
+        var appointment = new Appointment
+        {
+            Id = id ?? Guid.NewGuid(),
+            DoctorId = data.Doctor.Id,
+            AvailabilitySlotId = data.Slot.Id,
+            PatientDni = patientDni,
+            Reason = "Consulta histórica",
+            Status = status,
+            CreatedAt = Now.UtcDateTime,
+            UpdatedAt = Now.UtcDateTime
+        };
+        context.Appointments.Add(appointment);
+        await context.SaveChangesAsync();
+        return appointment;
+    }
+
+    private static async Task AssertErrorContractAsync(
+        HttpResponseMessage response,
+        HttpStatusCode expectedStatus,
+        string expectedErrorCode,
+        bool expectDetails)
+    {
+        Assert.Equal(expectedStatus, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(expectedErrorCode, body.RootElement.GetProperty("errorCode").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(body.RootElement.GetProperty("message").GetString()));
+        var details = body.RootElement.GetProperty("details").EnumerateArray();
+        if (expectDetails)
+            Assert.NotEmpty(details);
+        else
+            Assert.Empty(details);
     }
 
     private async Task<(Speciality Speciality, Doctor Doctor, AvailabilitySlot Slot)> CreateSlotAsync()
