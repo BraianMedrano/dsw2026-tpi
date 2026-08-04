@@ -13,7 +13,7 @@ public interface IAppointmentService
         int pageSize);
     Task CancelAsync(Guid id, string patientEmail);
     Task<IReadOnlyCollection<AppointmentModel.Response>> GetByDateAsync(DateOnly date);
-    Task<AppointmentModel.PagedResponse> SearchAsync(
+    Task<AppointmentModel.AdminPagedResponse> SearchAsync(
         Guid? specialtyId,
         Guid? doctorId,
         string? dni,

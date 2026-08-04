@@ -168,6 +168,63 @@ public sealed class AvailabilitiesApiTests : IClassFixture<DoctorsApiFactory>
     }
 
     [Fact]
+    public async Task Put_ReplacesOnlyFutureUnreservedSlotsAndPreservesHistory()
+    {
+        var doctor = await CreateActiveDoctorAsync();
+        var rule = new AvailabilityRule
+        {
+            DoctorId = doctor.Id,
+            Year = 2026,
+            Month = 8,
+            DayOfWeek = DayOfWeek.Monday.ToString(),
+            StartTime = new TimeOnly(9, 0),
+            EndTime = new TimeOnly(10, 0)
+        };
+        var past = Slot(rule, new DateOnly(2026, 8, 10), new TimeOnly(9, 0));
+        var futureAvailable = Slot(rule, new DateOnly(2026, 8, 17), new TimeOnly(9, 0));
+        var futureBooked = Slot(rule, new DateOnly(2026, 8, 17), new TimeOnly(9, 30), "BOOKED");
+        var appointment = new Appointment
+        {
+            DoctorId = doctor.Id,
+            AvailabilitySlotId = futureBooked.Id,
+            PatientDni = "23456789",
+            Reason = "Control anual",
+            Status = AppointmentStatus.BOOKED
+        };
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<Dsw2026TpiDbContext>();
+            context.AddRange(rule, past, futureAvailable, futureBooked, appointment);
+            await context.SaveChangesAsync();
+        }
+
+        using var client = _factory.CreateAdministratorClient();
+        var response = await client.PutAsJsonAsync(
+            "/api/availabilities",
+            RequestFor(doctor.Id, "MARTES", "10:00", "11:00"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var replacement = Assert.Single((await response.Content.ReadFromJsonAsync<List<DoctorAvailabilityResponseDto>>())!);
+        Assert.Equal("MARTES", replacement.Day);
+        await using var verificationScope = _factory.Services.CreateAsyncScope();
+        var verification = verificationScope.ServiceProvider.GetRequiredService<Dsw2026TpiDbContext>();
+        Assert.NotNull(await verification.AvailabilitySlots.FindAsync(past.Id));
+        Assert.Null(await verification.AvailabilitySlots.FindAsync(futureAvailable.Id));
+        var preservedBookedSlot = (await verification.AvailabilitySlots.FindAsync(futureBooked.Id))!;
+        Assert.Equal("BOOKED", preservedBookedSlot.Status);
+        Assert.True(preservedBookedSlot.Deleted);
+        var persistedAppointment = await verification.Appointments.FindAsync(appointment.Id);
+        Assert.NotNull(persistedAppointment);
+        Assert.Equal(futureBooked.Id, persistedAppointment.AvailabilitySlotId);
+        Assert.Equal(AppointmentStatus.BOOKED, persistedAppointment.Status);
+        Assert.True((await verification.AvailabilityRules.FindAsync(rule.Id))!.Deleted);
+        Assert.Contains(
+            await verification.AvailabilitySlots.Where(slot => slot.DoctorId == doctor.Id).ToListAsync(),
+            slot => slot.SlotDate > DateOnly.FromDateTime(DoctorsApiFactory.AvailabilityNow.DateTime) &&
+                    slot.StartTime == new TimeOnly(10, 0) && slot.Status == "AVAILABLE");
+    }
+
+    [Fact]
     public async Task Post_ExcludesFixedHolidayAndGeneratesTheExactRemainingSlots()
     {
         var holiday = new DateOnly(2026, 8, 17);
@@ -223,6 +280,21 @@ public sealed class AvailabilitiesApiTests : IClassFixture<DoctorsApiFactory>
     {
         DoctorId = doctorId,
         Days = [new AvailabilityDayDto { Day = day, StartTime = start, EndTime = end }]
+    };
+
+    private static AvailabilitySlot Slot(
+        AvailabilityRule rule,
+        DateOnly date,
+        TimeOnly start,
+        string status = "AVAILABLE") => new()
+    {
+        AvailabilityRule = rule,
+        AvailabilityRuleId = rule.Id,
+        DoctorId = rule.DoctorId,
+        SlotDate = date,
+        StartTime = start,
+        EndTime = start.AddMinutes(30),
+        Status = status
     };
 
     private static string ToSpanishDay(DayOfWeek day) => day switch

@@ -138,14 +138,32 @@ public sealed class AppointmentsApiTests : IAsyncLifetime
             $"/api/appointments?date={data.Slot.SlotDate:yyyy-MM-dd}");
         Assert.Contains(byDate!, item => item.AvailabilitySlotId == data.Slot.Id);
 
-        var result = await administrator.GetFromJsonAsync<AppointmentModel.PagedResponse>(
+        var response = await administrator.GetAsync(
             $"/api/appointments/search?specialtyId={data.Speciality.Id}" +
             $"&doctorId={data.Doctor.Id}&dni=23456789&date={data.Slot.SlotDate:yyyy-MM-dd}" +
             "&pageIndex=0&pageSize=1");
-        Assert.Equal(1, result!.Total);
-        Assert.Single(result.Data);
-        Assert.Equal(0, result.PageIndex);
-        Assert.Equal(1, result.PageSize);
+
+        response.EnsureSuccessStatusCode();
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var root = document.RootElement;
+        Assert.Equal(["pageIndex", "pageSize", "total", "data"], root.EnumerateObject().Select(property => property.Name));
+        Assert.Equal(0, root.GetProperty("pageIndex").GetInt32());
+        Assert.Equal(1, root.GetProperty("pageSize").GetInt32());
+        Assert.Equal(1, root.GetProperty("total").GetInt32());
+
+        var appointment = Assert.Single(root.GetProperty("data").EnumerateArray());
+        Assert.Equal(["appointmentsId", "appointmentsStatus", "patient", "doctor"], appointment.EnumerateObject().Select(property => property.Name));
+        Assert.Equal("BOOKED", appointment.GetProperty("appointmentsStatus").GetString());
+        var patientData = appointment.GetProperty("patient");
+        Assert.Equal(["dni", "fullName"], patientData.EnumerateObject().Select(property => property.Name));
+        Assert.Equal(23456789, patientData.GetProperty("dni").GetInt64());
+        Assert.Equal(string.Empty, patientData.GetProperty("fullName").GetString());
+        var doctorData = appointment.GetProperty("doctor");
+        Assert.Equal(data.Doctor.Id, doctorData.GetProperty("doctorId").GetGuid());
+        Assert.Equal(data.Doctor.Name, doctorData.GetProperty("name").GetString());
+        var specialty = doctorData.GetProperty("specialty");
+        Assert.Equal(data.Speciality.Id, specialty.GetProperty("specialtyId").GetGuid());
+        Assert.Equal(data.Speciality.Name, specialty.GetProperty("name").GetString());
     }
 
     [Fact]
@@ -506,12 +524,13 @@ public sealed class AppointmentsApiTests : IAsyncLifetime
     }
 
     [Theory]
-    [InlineData(false, AppointmentStatus.BOOKED, "BOOKED")]
-    [InlineData(true, AppointmentStatus.CANCELLED, "AVAILABLE")]
+    [InlineData(false, AppointmentStatus.BOOKED, "BOOKED", true)]
+    [InlineData(true, AppointmentStatus.CANCELLED, "AVAILABLE", true)]
     public async Task AvailabilityUpdatePreservesSlotsReferencedByAppointments(
         bool cancel,
         AppointmentStatus expectedAppointmentStatus,
-        string expectedSlotStatus)
+        string expectedSlotStatus,
+        bool expectedSlotDeleted)
     {
         var data = await CreateSlotAsync();
         using var patient = await CreatePatientClientAsync(
@@ -533,13 +552,62 @@ public sealed class AppointmentsApiTests : IAsyncLifetime
                 Days = [new AvailabilityDayDto { Day = "MIÉRCOLES", StartTime = "10:00", EndTime = "11:00" }]
             });
 
-        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
-        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        Assert.Equal("AVAILABILITY_HAS_APPOINTMENTS", body.RootElement.GetProperty("errorCode").GetString());
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         await using var scope = _factory.Services.CreateAsyncScope();
         var context = scope.ServiceProvider.GetRequiredService<Dsw2026TpiDbContext>();
         Assert.Equal(expectedAppointmentStatus, (await context.Appointments.FindAsync(appointment.Id))!.Status);
-        Assert.Equal(expectedSlotStatus, (await context.AvailabilitySlots.FindAsync(data.Slot.Id))!.Status);
+        var preservedSlot = (await context.AvailabilitySlots.FindAsync(data.Slot.Id))!;
+        Assert.Equal(expectedSlotStatus, preservedSlot.Status);
+        Assert.Equal(expectedSlotDeleted, preservedSlot.Deleted);
+    }
+
+    [Fact]
+    public async Task AvailabilityUpdateReusesBookedSlotWhenReplacementKeepsItsSchedule()
+    {
+        var data = await CreateSlotAsync();
+        using var owner = await CreatePatientClientAsync("same-schedule-owner@example.com", "92345678");
+        var create = await owner.PostAsJsonAsync(
+            "/api/appointments",
+            Request(data.Doctor.Id, data.Slot.Id, "92345678"));
+        var originalAppointment = (await create.Content.ReadFromJsonAsync<AppointmentModel.Response>())!;
+        using var administrator = await CreateAdministratorClientAsync();
+
+        var update = await administrator.PutAsJsonAsync(
+            "/api/availabilities",
+            new AvailabilityRequestDto
+            {
+                DoctorId = data.Doctor.Id,
+                Days = [new AvailabilityDayDto { Day = "MARTES", StartTime = "09:00", EndTime = "10:00" }]
+            });
+
+        Assert.Equal(HttpStatusCode.OK, update.StatusCode);
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<Dsw2026TpiDbContext>();
+            var matchingSlots = await context.AvailabilitySlots
+                .Where(slot =>
+                    slot.DoctorId == data.Doctor.Id &&
+                    slot.SlotDate == data.Slot.SlotDate &&
+                    slot.StartTime == data.Slot.StartTime)
+                .ToListAsync();
+            var preservedSlot = Assert.Single(matchingSlots);
+            Assert.Equal(data.Slot.Id, preservedSlot.Id);
+            Assert.Equal("BOOKED", preservedSlot.Status);
+            Assert.False(preservedSlot.Deleted);
+        }
+
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await owner.DeleteAsync($"/api/appointments/{originalAppointment.Id}")).StatusCode);
+        using var nextPatient = await CreatePatientClientAsync("same-schedule-next@example.com", "93456789");
+        var rebook = await nextPatient.PostAsJsonAsync(
+            "/api/appointments",
+            Request(data.Doctor.Id, data.Slot.Id, "93456789"));
+
+        Assert.Equal(HttpStatusCode.Created, rebook.StatusCode);
+        var replacementAppointment = (await rebook.Content.ReadFromJsonAsync<AppointmentModel.Response>())!;
+        Assert.Equal(data.Slot.Id, replacementAppointment.AvailabilitySlotId);
+        Assert.NotEqual(originalAppointment.Id, replacementAppointment.Id);
     }
 
     private async Task<Appointment> AddAppointmentAsync(

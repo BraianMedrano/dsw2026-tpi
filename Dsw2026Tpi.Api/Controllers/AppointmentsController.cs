@@ -57,7 +57,7 @@ public sealed class AppointmentsController(IAppointmentService appointmentServic
 
     [HttpGet("search")]
     [Authorize(Policy = Policies.AdminPolicy)]
-    public async Task<ActionResult<AppointmentModel.PagedResponse>> Search(
+    public async Task<ActionResult<AppointmentModel.AdminPagedResponse>> Search(
         [FromQuery] Guid? specialtyId,
         [FromQuery] Guid? doctorId,
         [FromQuery] string? dni,

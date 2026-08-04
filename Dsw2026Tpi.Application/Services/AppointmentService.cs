@@ -197,7 +197,7 @@ public sealed class AppointmentService(
             .ToListAsync();
     }
 
-    public async Task<AppointmentModel.PagedResponse> SearchAsync(
+    public async Task<AppointmentModel.AdminPagedResponse> SearchAsync(
         Guid? specialtyId,
         Guid? doctorId,
         string? dni,
@@ -220,14 +220,42 @@ public sealed class AppointmentService(
             query = query.Where(appointment => appointment.AvailabilitySlot.SlotDate == date);
 
         var total = await query.CountAsync();
-        var data = await Project(query
+        var page = await query
             .OrderBy(appointment => appointment.AvailabilitySlot.SlotDate)
             .ThenBy(appointment => appointment.AvailabilitySlot.StartTime)
             .ThenBy(appointment => appointment.Id)
             .Skip(pageIndex * pageSize)
-            .Take(pageSize))
+            .Take(pageSize)
+            .Select(appointment => new
+            {
+                appointment.Id,
+                appointment.Status,
+                appointment.PatientDni,
+                appointment.DoctorId,
+                DoctorName = appointment.Doctor.Name,
+                SpecialtyId = appointment.Doctor.SpecialityId,
+                SpecialtyName = appointment.Doctor.Speciality == null
+                    ? null
+                    : appointment.Doctor.Speciality.Name
+            })
             .ToListAsync();
-        return new AppointmentModel.PagedResponse(pageIndex, pageSize, total, data);
+
+        // El sistema no registra el nombre del paciente. La v1.7 permite enviarlo vacío, evitando
+        // inventar datos o sumar consultas por fila a un contexto de autenticación separado.
+        var data = page.Select(appointment => new AppointmentModel.AdminResponse(
+            appointment.Id,
+            appointment.Status.ToString(),
+            new AppointmentModel.AdminPatientResponse(long.Parse(appointment.PatientDni), string.Empty),
+            new AppointmentModel.AdminDoctorResponse(
+                appointment.DoctorId,
+                appointment.DoctorName,
+                appointment.SpecialtyId.HasValue
+                    ? new AppointmentModel.AdminSpecialtyResponse(
+                        appointment.SpecialtyId.Value,
+                        appointment.SpecialtyName ?? string.Empty)
+                    : null)))
+            .ToList();
+        return new AppointmentModel.AdminPagedResponse(pageIndex, pageSize, total, data);
     }
 
     private static void ValidatePagination(int pageIndex, int pageSize)
