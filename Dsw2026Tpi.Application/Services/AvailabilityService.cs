@@ -26,6 +26,62 @@ public class AvailabilityService(Dsw2026TpiDbContext context, TimeProvider timeP
         return rules.Select(ToResponse).ToList();
     }
 
+    public async Task<IReadOnlyCollection<AvailabilitySlotModel.Response>> GetAvailableSlotsAsync(
+        Guid? specialtyId,
+        Guid? doctorId,
+        DateOnly? date)
+    {
+        var now = _timeProvider.GetLocalNow().DateTime;
+        var today = DateOnly.FromDateTime(now);
+        var currentTime = TimeOnly.FromDateTime(now);
+
+        // Los filtros globales no cubren reglas ni slots heredados; la consulta explicita cada condición reservable.
+        var query = _context.AvailabilitySlots
+            .AsNoTracking()
+            .Where(slot =>
+                !slot.Deleted &&
+                slot.Status == "AVAILABLE" &&
+                !slot.AvailabilityRule.Deleted &&
+                slot.DoctorId == slot.AvailabilityRule.DoctorId &&
+                !slot.AvailabilityRule.Doctor.Deleted &&
+                slot.AvailabilityRule.Doctor.SpecialityId != null &&
+                !slot.AvailabilityRule.Doctor.Speciality!.Deleted &&
+                (slot.SlotDate > today ||
+                 slot.SlotDate == today && slot.StartTime > currentTime));
+
+        if (specialtyId.HasValue)
+            query = query.Where(slot => slot.AvailabilityRule.Doctor.SpecialityId == specialtyId);
+        if (doctorId.HasValue)
+            query = query.Where(slot => slot.DoctorId == doctorId);
+        if (date.HasValue)
+            query = query.Where(slot => slot.SlotDate == date);
+
+        var slots = await query
+            .OrderBy(slot => slot.SlotDate)
+            .ThenBy(slot => slot.StartTime)
+            .ThenBy(slot => slot.DoctorId)
+            .ThenBy(slot => slot.Id)
+            .Select(slot => new AvailableSlotProjection(
+                slot.Id,
+                slot.SlotDate,
+                slot.StartTime,
+                slot.EndTime,
+                slot.AvailabilityRule.Doctor.Id,
+                slot.AvailabilityRule.Doctor.Name,
+                slot.AvailabilityRule.Doctor.Speciality!.Id,
+                slot.AvailabilityRule.Doctor.Speciality.Name))
+            .ToListAsync();
+
+        return slots.Select(slot => new AvailabilitySlotModel.Response(
+            slot.AvailabilitySlotId,
+            slot.Date,
+            slot.StartTime.ToString("HH:mm"),
+            slot.EndTime.ToString("HH:mm"),
+            new AvailabilitySlotModel.DoctorResponse(slot.DoctorId, slot.DoctorName),
+            new AvailabilitySlotModel.SpecialtyResponse(slot.SpecialtyId, slot.SpecialtyName)))
+            .ToList();
+    }
+
     public async Task<List<DoctorAvailabilityResponseDto>> CreateAvailabilityAsync(AvailabilityRequestDto request)
     {
         var now = _timeProvider.GetLocalNow().DateTime;
@@ -326,5 +382,14 @@ public class AvailabilityService(Dsw2026TpiDbContext context, TimeProvider timeP
     };
 
     private sealed record NormalizedDay(string Day, TimeOnly Start, TimeOnly End);
+    private sealed record AvailableSlotProjection(
+        Guid AvailabilitySlotId,
+        DateOnly Date,
+        TimeOnly StartTime,
+        TimeOnly EndTime,
+        Guid DoctorId,
+        string DoctorName,
+        Guid SpecialtyId,
+        string SpecialtyName);
     private sealed class NonWorkingDaysFile { public List<string>? Dates { get; init; } }
 }
