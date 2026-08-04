@@ -14,7 +14,7 @@ public class DoctorConfiguration : IEntityTypeConfiguration<Doctor>
             .IsRequired();
         builder.Property(doctor => doctor.LicenseNumber)
             .IsRequired();
-        builder.Property(doctor => doctor.IsActive)
+        builder.Property(doctor => doctor.Deleted)
             .IsRequired();
 
         builder.HasOne(doctor => doctor.Speciality)
@@ -22,6 +22,6 @@ public class DoctorConfiguration : IEntityTypeConfiguration<Doctor>
             .HasForeignKey(doctor => doctor.SpecialityId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasQueryFilter(doctor => doctor.IsActive);
+        builder.HasQueryFilter(doctor => !doctor.Deleted);
     }
 }

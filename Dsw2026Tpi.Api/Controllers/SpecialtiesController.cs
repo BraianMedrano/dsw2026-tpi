@@ -42,14 +42,14 @@ public class SpecialtiesController : ControllerBase
     [HttpPut("{id:guid}")]
     public async Task<IActionResult> Update(Guid id, [FromBody] SpecialtyModel.Request request)
     {
-        await _specialtyService.UpdateAsync(id, request);
-        return NoContent();
+        var updated = await _specialtyService.UpdateAsync(id, request);
+        return Ok(updated);
     }
 
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id)
     {
         await _specialtyService.DeleteAsync(id);
-        return NoContent();
+        return Ok("ok");
     }
 }

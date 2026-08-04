@@ -187,9 +187,8 @@ public class SpecialtiesApiTests : IClassFixture<SpecialtiesApiFactory>
             $"/api/specialties/{created.Id}",
             updatedRequest);
 
-        Assert.Equal(HttpStatusCode.NoContent, updateResponse.StatusCode);
-        var updated = await client.GetFromJsonAsync<SpecialtyModel.Response>(
-            $"/api/specialties/{created.Id}");
+        Assert.Equal(HttpStatusCode.OK, updateResponse.StatusCode);
+        var updated = await updateResponse.Content.ReadFromJsonAsync<SpecialtyModel.Response>();
         Assert.NotNull(updated);
         Assert.Equal(updatedRequest.Name, updated.Name);
         Assert.Equal(updatedRequest.Description, updated.Description);
@@ -207,7 +206,8 @@ public class SpecialtiesApiTests : IClassFixture<SpecialtiesApiFactory>
         var listResponse = await client.GetFromJsonAsync<SpecialtyModel.PagedResponse>(
             $"/api/specialties?name={marker}");
 
-        Assert.Equal(HttpStatusCode.NoContent, deleteResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, deleteResponse.StatusCode);
+        Assert.Equal("ok", await deleteResponse.Content.ReadAsStringAsync());
         Assert.Equal(HttpStatusCode.NotFound, getResponse.StatusCode);
         Assert.NotNull(listResponse);
         Assert.Equal(0, listResponse.Total);
