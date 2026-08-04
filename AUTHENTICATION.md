@@ -27,7 +27,7 @@ Las credenciales se leen desde User Secrets o variables de entorno. En Visual St
 
 Como alternativa, las variables de entorno se llaman `InitialAdministrator__Email` e `InitialAdministrator__Password`. Nunca se deben copiar valores reales a `appsettings.json`, README, commits ni capturas.
 
-No existe `POST /api/auth/admin/register`. El TPI solo necesita el administrador inicial y un registro público permitiría que cualquier persona se asigne privilegios. Si en el futuro el negocio requiere más administradores, deberá agregarse un caso de uso separado y protegido por `AdminPolicy`; no forma parte de esta feature.
+No existe `POST /api/auth/admin/register`. El TPI solo necesita el administrador inicial y un registro público permitiría que cualquier persona se asigne privilegios. Si en el futuro el negocio requiere más administradores, deberá agregarse un caso de uso separado y protegido por `AdminPolicy`; no forma parte de esta funcionalidad.
 
 ## Login de administrador
 
@@ -58,6 +58,12 @@ El DNI se modela como texto de 7 u 8 dígitos porque es un identificador, no un 
 
 Una respuesta válida devuelve un JWT y el rol público `PACIENTE`.
 
+## Cierre de sesión y revocación
+
+Cada JWT emitido incluye un identificador único `jti`. `POST /api/auth/logout` requiere el token Bearer actual y, si es válido, guarda su `jti` y fecha de expiración en la tabla persistente `RevokedTokens`. La respuesta exitosa es `200` con `"ok"`.
+
+La validación de autenticación consulta esa tabla en cada solicitud protegida. Un token revocado se rechaza con `401`, incluso después de reiniciar la API. Los tokens emitidos antes de incorporar esta funcionalidad no contienen `jti` y se rechazan intencionalmente porque no pueden revocarse de manera segura.
+
 ## Endpoints públicos y protegidos
 
 Solo estos endpoints son anónimos:
@@ -65,9 +71,9 @@ Solo estos endpoints son anónimos:
 - `POST /api/auth/admin/login`
 - `POST /api/auth/patient/login`
 
-La política de autorización de respaldo exige autenticación para cualquier otro endpoint, incluso para uno nuevo que no declare `[Authorize]`. Las políticas `AdminPolicy` y `PatientPolicy` agregan la verificación del rol correspondiente. `/health-check` también requiere un token porque la consigna deja públicos únicamente los dos login.
+`POST /api/auth/logout` y el resto de la API requieren autenticación. La política de autorización de respaldo protege incluso un endpoint nuevo que no declare `[Authorize]`. Las políticas `AdminPolicy` y `PatientPolicy` agregan la verificación del rol correspondiente. `/health-check` también requiere un token porque la consigna deja públicos únicamente los dos login.
 
-- Sin token o con token inválido: `401`.
+- Sin token, con token inválido o con token revocado: `401`.
 - Con token válido pero rol incorrecto: `403`.
 
 ## Límites de solicitudes
@@ -90,11 +96,17 @@ Los valores se configuran en `RateLimiting` dentro de `appsettings.json`. Al exc
 3. Copiar el valor `token` de la respuesta.
 4. Presionar **Authorize** y escribir `Bearer ` seguido del token.
 5. Probar un endpoint protegido.
+6. Ejecutar `POST /api/auth/logout` con ese mismo token.
+7. Repetir la solicitud protegida y comprobar que responde `401`.
+8. Para continuar, iniciar sesión nuevamente y reemplazar el token autorizado.
 
 Los tests se pueden ejecutar antes o después de probar Swagger desde **Test Explorer**. Swagger no ejecuta tests automáticamente: es una prueba manual de la API en ejecución; Test Explorer ejecuta verificaciones repetibles y aisladas.
 
-## Migraciones
+## Migraciones de autenticación
 
-`AuthenticationDbContext` conserva sus migraciones en `Dsw2026Tpi.Data/Migrations/Identity`. La migración `AddPatientDni` agrega la columna y el índice único.
+`AuthenticationDbContext` conserva sus migraciones en `Dsw2026Tpi.Data/Migrations/Identity`.
 
-En Development, el arranque aplica primero las migraciones de dominio y luego las de Identity. En otros ambientes deben aplicarse explícitamente durante el despliegue; la API no modifica el esquema automáticamente.
+- `AddPatientDni` agrega la columna de DNI y su índice único.
+- `AddRevokedTokens` agrega la tabla persistente utilizada por el cierre de sesión.
+
+Ambos contextos comparten el archivo SQLite, pero mantienen migraciones independientes. El orden, los comandos y las precauciones para actualizar o reconstruir la base local están documentados en [Base de datos local](DEVELOPMENT.md#base-de-datos-local).
