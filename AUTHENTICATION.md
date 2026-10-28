@@ -55,6 +55,7 @@ El DNI se modela como texto de 7 u 8 dígitos porque es un identificador, no un 
 - Si ambos pertenecen al mismo paciente, se reutiliza la cuenta.
 - Si uno ya pertenece a otra identidad, se responde `401` sin indicar cuál dato produjo el conflicto.
 - El índice único de DNI evita pacientes duplicados y la creación se completa dentro de una transacción para no dejar cuentas sin rol.
+- En cada login también se asegura el `Patient` del dominio (RN06) con ese DNI, asociado al usuario de Identity mediante `UserId`. Como ambos contextos son independientes, no existe una FK física entre `PATIENTS` y las tablas de Identity.
 
 Una respuesta válida devuelve un JWT y el rol público `PACIENTE`.
 

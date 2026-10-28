@@ -126,7 +126,7 @@ public sealed class AvailabilitySlotsApiTests : IClassFixture<DoctorsApiFactory>
         {
             var context = scope.ServiceProvider.GetRequiredService<Dsw2026TpiDbContext>();
             AddCandidate(context, ActiveDoctor("Disponible"), new TimeOnly(9, 0), expected);
-            excluded.Add(AddCandidate(context, ActiveDoctor("Reservado"), new TimeOnly(9, 0), status: "BOOKED"));
+            excluded.Add(AddCandidate(context, ActiveDoctor("Reservado"), new TimeOnly(9, 0), booked: true));
             excluded.Add(AddCandidate(context, ActiveDoctor("Slot eliminado"), new TimeOnly(9, 0), slotDeleted: true));
             excluded.Add(AddCandidate(context, ActiveDoctor("Regla eliminada"), new TimeOnly(9, 0), ruleDeleted: true));
             excluded.Add(AddCandidate(context, InactiveDoctor("Médico inactivo"), new TimeOnly(9, 0)));
@@ -183,35 +183,23 @@ public sealed class AvailabilitySlotsApiTests : IClassFixture<DoctorsApiFactory>
         Doctor doctor,
         TimeOnly start,
         Guid? slotId = null,
-        string status = "AVAILABLE",
+        bool booked = false,
         bool slotDeleted = false,
         bool ruleDeleted = false,
         DateOnly? date = null)
     {
         var slotDate = date ?? FutureDate;
-        var rule = new AvailabilityRule
+        var now = DoctorsApiFactory.AvailabilityNow.UtcDateTime;
+        var rule = doctor.AddAvailability(
+            slotDate.Year, slotDate.Month, slotDate.DayOfWeek, start, start.AddMinutes(30), now);
+        if (ruleDeleted) rule.MarkAsDeleted(now);
+        var slot = rule.AddSlot(slotDate, start, now, slotId);
+        if (slotDeleted) slot.MarkAsDeleted(now);
+        if (booked)
         {
-            Doctor = doctor,
-            DoctorId = doctor.Id,
-            Year = slotDate.Year,
-            Month = slotDate.Month,
-            DayOfWeek = slotDate.DayOfWeek.ToString(),
-            StartTime = start,
-            EndTime = start.AddMinutes(30),
-            Deleted = ruleDeleted
-        };
-        var slot = new AvailabilitySlot
-        {
-            Id = slotId ?? Guid.NewGuid(),
-            AvailabilityRule = rule,
-            AvailabilityRuleId = rule.Id,
-            DoctorId = doctor.Id,
-            SlotDate = slotDate,
-            StartTime = start,
-            EndTime = start.AddMinutes(30),
-            Status = status,
-            Deleted = slotDeleted
-        };
+            var patient = new Patient(Random.Shared.Next(10_000_000, 99_999_999).ToString(), null, now);
+            patient.Book(slot, "Reserva de prueba", now);
+        }
         context.AvailabilitySlots.Add(slot);
         return slot.Id;
     }

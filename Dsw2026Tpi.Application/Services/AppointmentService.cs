@@ -4,6 +4,7 @@ using Dsw2026Tpi.CrossCutting.Exceptions;
 using Dsw2026Tpi.Data;
 using Dsw2026Tpi.Data.Identity;
 using Dsw2026Tpi.Domain.Entities;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -12,11 +13,13 @@ namespace Dsw2026Tpi.Application.Services;
 public sealed class AppointmentService(
     Dsw2026TpiDbContext context,
     AuthenticationDbContext authenticationContext,
+    IPatientRegistry patientRegistry,
     TimeProvider timeProvider,
     ILogger<AppointmentService> logger) : IAppointmentService
 {
     private readonly Dsw2026TpiDbContext _context = context;
     private readonly AuthenticationDbContext _authenticationContext = authenticationContext;
+    private readonly IPatientRegistry _patientRegistry = patientRegistry;
     private readonly TimeProvider _timeProvider = timeProvider;
     private readonly ILogger<AppointmentService> _logger = logger;
 
@@ -25,10 +28,9 @@ public sealed class AppointmentService(
         string patientEmail)
     {
         ValidateRequest(request);
-        await EnsurePatientOwnershipAsync(request.Patient.Dni, patientEmail);
+        var user = await EnsurePatientOwnershipAsync(request.Patient.Dni, patientEmail);
 
         var slot = await _context.AvailabilitySlots
-            .AsNoTracking()
             .FirstOrDefaultAsync(candidate =>
                 candidate.Id == request.AvailabilitySlotId &&
                 !candidate.Deleted)
@@ -41,59 +43,34 @@ public sealed class AppointmentService(
         }
 
         var now = _timeProvider.GetLocalNow();
-        var slotStart = slot.SlotDate.ToDateTime(slot.StartTime);
-        if (slotStart <= now.DateTime)
+        if (!slot.IsFutureAt(now.DateTime))
         {
             throw Invalid("availabilitySlotId", "El turno debe corresponder a una fecha y hora futuras.");
         }
+        if (!slot.IsFree)
+        {
+            throw SlotConflict();
+        }
 
-        await using var transaction = await _context.Database.BeginTransactionAsync();
+        var patient = await _patientRegistry.EnsureAsync(request.Patient.Dni, user.Id);
+        var appointment = patient.Book(slot, request.Reason, now.UtcDateTime);
         try
         {
-            // La actualización condicional la resuelve SQLite de forma atómica: sólo una solicitud puede
-            // cambiar el slot de AVAILABLE a BOOKED, aun si ambas lo leyeron disponible al mismo tiempo.
-            // No dependemos de un UNIQUE sobre APPOINTMENTS.AvailabilitySlotId: CancelAsync conserva la fila
-            // histórica como CANCELLED y devuelve el slot a AVAILABLE, por lo que una reserva posterior crea
-            // otra fila BOOKED para el mismo slot. AppointmentsApiTests demuestra ambos comportamientos.
-            var reservedSlots = await _context.AvailabilitySlots
-                .Where(candidate =>
-                    candidate.Id == slot.Id &&
-                    candidate.Status == "AVAILABLE" &&
-                    !candidate.Deleted)
-                .ExecuteUpdateAsync(update => update
-                    .SetProperty(candidate => candidate.Status, "BOOKED")
-                    .SetProperty(candidate => candidate.UpdatedAt, now.UtcDateTime));
-
-            if (reservedSlots == 0)
-            {
-                throw SlotConflict();
-            }
-
-            var appointment = new Appointment
-            {
-                DoctorId = request.DoctorId,
-                AvailabilitySlotId = slot.Id,
-                PatientDni = request.Patient.Dni,
-                Reason = request.Reason.Trim(),
-                Status = AppointmentStatus.BOOKED,
-                CreatedAt = now.UtcDateTime,
-                UpdatedAt = now.UtcDateTime
-            };
-            _context.Appointments.Add(appointment);
+            // Status es token de concurrencia: SaveChanges ejecuta UPDATE ... WHERE Status = 'AVAILABLE' y la
+            // inserción de la cita en una sola transacción. Si otra solicitud reservó el turno después de leerlo,
+            // el UPDATE no afecta filas y EF lanza DbUpdateConcurrencyException, sin crear la cita.
             await _context.SaveChangesAsync();
-            await transaction.CommitAsync();
-
-            _logger.LogInformation(
-                "Cita {AppointmentId} reservada para el slot {SlotId}",
-                appointment.Id,
-                slot.Id);
-            return await GetResponseAsync(appointment.Id);
         }
-        catch
+        catch (DbUpdateException exception) when (exception is DbUpdateConcurrencyException || IsUniqueConstraintViolation(exception))
         {
-            await transaction.RollbackAsync();
-            throw;
+            throw SlotConflict();
         }
+
+        _logger.LogInformation(
+            "Cita {AppointmentId} reservada para el slot {SlotId}",
+            appointment.Id,
+            slot.Id);
+        return await GetResponseAsync(appointment.Id);
     }
 
     public async Task<IReadOnlyCollection<AppointmentModel.Response>> GetActiveForPatientAsync(
@@ -105,7 +82,7 @@ public sealed class AppointmentService(
 
         var query = AppointmentsQuery()
                 .Where(appointment =>
-                    appointment.PatientDni == dni &&
+                    appointment.Patient.Dni == dni &&
                     appointment.Status == AppointmentStatus.BOOKED)
             .OrderBy(appointment => appointment.AvailabilitySlot.SlotDate)
             .ThenBy(appointment => appointment.AvailabilitySlot.StartTime);
@@ -125,7 +102,7 @@ public sealed class AppointmentService(
 
         var query = AppointmentsQuery()
             .Where(appointment =>
-                appointment.PatientDni == dni &&
+                appointment.Patient.Dni == dni &&
                 (appointment.Status == AppointmentStatus.CANCELLED ||
                  appointment.Status == AppointmentStatus.ATTENDED ||
                  appointment.Status == AppointmentStatus.NO_SHOW));
@@ -145,46 +122,29 @@ public sealed class AppointmentService(
     public async Task CancelAsync(Guid id, string patientEmail)
     {
         var appointment = await _context.Appointments
-            .AsNoTracking()
+            .Include(candidate => candidate.AvailabilitySlot)
+            .Include(candidate => candidate.Patient)
             .FirstOrDefaultAsync(candidate => candidate.Id == id)
             ?? throw new EntityNotFoundException("Cita");
-        await EnsurePatientOwnershipAsync(appointment.PatientDni, patientEmail);
+        await EnsurePatientOwnershipAsync(appointment.Patient.Dni, patientEmail);
 
-        var now = _timeProvider.GetUtcNow().UtcDateTime;
-        await using var transaction = await _context.Database.BeginTransactionAsync();
+        if (!appointment.IsActive)
+        {
+            throw InvalidStatus();
+        }
+
+        // Cancelar no borra la cita: pasa a CANCELLED con su fecha de cancelación y el turno vuelve a AVAILABLE.
+        // Ambos cambios se guardan juntos; el token de concurrencia sobre Status evita dos cancelaciones simultáneas.
+        appointment.Cancel(_timeProvider.GetUtcNow().UtcDateTime);
         try
         {
-            // La condición sobre BOOKED expresa la única transición permitida y evita dos cancelaciones simultáneas.
-            // Cancelar no borra la cita: BOOKED pasa a CANCELLED para preservar la historia clínica/operativa.
-            var cancelled = await _context.Appointments
-                .Where(candidate =>
-                    candidate.Id == id &&
-                    candidate.Status == AppointmentStatus.BOOKED)
-                .ExecuteUpdateAsync(update => update
-                    .SetProperty(candidate => candidate.Status, AppointmentStatus.CANCELLED)
-                    .SetProperty(candidate => candidate.UpdatedAt, now));
-            if (cancelled == 0)
-            {
-                throw new ConflictException(
-                    "APPOINTMENT_INVALID_STATUS",
-                    "Sólo se puede cancelar una cita en estado BOOKED.");
-            }
-
-            // En la misma transacción el slot vuelve a AVAILABLE. Luego CreateAsync puede crear una NUEVA fila
-            // BOOKED que reutilice AvailabilitySlotId, mientras la fila CANCELLED anterior permanece consultable.
-            await _context.AvailabilitySlots
-                .Where(slot => slot.Id == appointment.AvailabilitySlotId)
-                .ExecuteUpdateAsync(update => update
-                    .SetProperty(slot => slot.Status, "AVAILABLE")
-                    .SetProperty(slot => slot.UpdatedAt, now));
-            await transaction.CommitAsync();
-            _logger.LogInformation("Cita {AppointmentId} cancelada", id);
+            await _context.SaveChangesAsync();
         }
-        catch
+        catch (DbUpdateConcurrencyException)
         {
-            await transaction.RollbackAsync();
-            throw;
+            throw InvalidStatus();
         }
+        _logger.LogInformation("Cita {AppointmentId} cancelada", id);
     }
 
     public async Task<IReadOnlyCollection<AppointmentModel.Response>> GetByDateAsync(DateOnly date)
@@ -193,7 +153,7 @@ public sealed class AppointmentService(
         return await Project(AppointmentsQuery()
                 .Where(appointment => appointment.AvailabilitySlot.SlotDate == date)
                 .OrderBy(appointment => appointment.AvailabilitySlot.StartTime)
-                .ThenBy(appointment => appointment.Doctor.Name))
+                .ThenBy(appointment => appointment.AvailabilitySlot.AvailabilityRule.Doctor.Name))
             .ToListAsync();
     }
 
@@ -211,11 +171,11 @@ public sealed class AppointmentService(
 
         var query = AppointmentsQuery();
         if (specialtyId.HasValue)
-            query = query.Where(appointment => appointment.Doctor.SpecialityId == specialtyId);
+            query = query.Where(appointment => appointment.AvailabilitySlot.AvailabilityRule.Doctor.SpecialityId == specialtyId);
         if (doctorId.HasValue)
-            query = query.Where(appointment => appointment.DoctorId == doctorId);
+            query = query.Where(appointment => appointment.AvailabilitySlot.DoctorId == doctorId);
         if (dni is not null)
-            query = query.Where(appointment => appointment.PatientDni == dni);
+            query = query.Where(appointment => appointment.Patient.Dni == dni);
         if (date.HasValue)
             query = query.Where(appointment => appointment.AvailabilitySlot.SlotDate == date);
 
@@ -230,30 +190,27 @@ public sealed class AppointmentService(
             {
                 appointment.Id,
                 appointment.Status,
-                appointment.PatientDni,
-                appointment.DoctorId,
-                DoctorName = appointment.Doctor.Name,
-                SpecialtyId = appointment.Doctor.SpecialityId,
-                SpecialtyName = appointment.Doctor.Speciality == null
-                    ? null
-                    : appointment.Doctor.Speciality.Name
+                PatientDni = appointment.Patient.Dni,
+                PatientFullName = appointment.Patient.FullName,
+                appointment.AvailabilitySlot.DoctorId,
+                DoctorName = appointment.AvailabilitySlot.AvailabilityRule.Doctor.Name,
+                SpecialtyId = appointment.AvailabilitySlot.AvailabilityRule.Doctor.SpecialityId,
+                SpecialtyName = appointment.AvailabilitySlot.AvailabilityRule.Doctor.Speciality.Name
             })
             .ToListAsync();
 
-        // El sistema no registra el nombre del paciente. La v1.7 permite enviarlo vacío, evitando
-        // inventar datos o sumar consultas por fila a un contexto de autenticación separado.
+        // El login del paciente sólo recibe email y DNI, por lo que el nombre puede no estar cargado.
+        // La v1.7 permite enviarlo vacío.
         var data = page.Select(appointment => new AppointmentModel.AdminResponse(
             appointment.Id,
             appointment.Status.ToString(),
-            new AppointmentModel.AdminPatientResponse(long.Parse(appointment.PatientDni), string.Empty),
+            new AppointmentModel.AdminPatientResponse(
+                long.Parse(appointment.PatientDni),
+                appointment.PatientFullName ?? string.Empty),
             new AppointmentModel.AdminDoctorResponse(
                 appointment.DoctorId,
                 appointment.DoctorName,
-                appointment.SpecialtyId.HasValue
-                    ? new AppointmentModel.AdminSpecialtyResponse(
-                        appointment.SpecialtyId.Value,
-                        appointment.SpecialtyName ?? string.Empty)
-                    : null)))
+                new AppointmentModel.AdminSpecialtyResponse(appointment.SpecialtyId, appointment.SpecialtyName))))
             .ToList();
         return new AppointmentModel.AdminPagedResponse(pageIndex, pageSize, total, data);
     }
@@ -272,22 +229,22 @@ public sealed class AppointmentService(
     private static IQueryable<AppointmentModel.Response> Project(IQueryable<Appointment> query) =>
         query.Select(appointment => new AppointmentModel.Response(
             appointment.Id,
-            appointment.Doctor.SpecialityId,
-            appointment.Doctor.Speciality == null ? null : appointment.Doctor.Speciality.Name,
-            appointment.DoctorId,
-            appointment.Doctor.Name,
+            appointment.AvailabilitySlot.AvailabilityRule.Doctor.SpecialityId,
+            appointment.AvailabilitySlot.AvailabilityRule.Doctor.Speciality.Name,
+            appointment.AvailabilitySlot.DoctorId,
+            appointment.AvailabilitySlot.AvailabilityRule.Doctor.Name,
             appointment.AvailabilitySlotId,
             appointment.AvailabilitySlot.SlotDate,
             appointment.AvailabilitySlot.StartTime,
             appointment.AvailabilitySlot.EndTime,
-            appointment.PatientDni,
+            appointment.Patient.Dni,
             appointment.Reason,
             appointment.Status.ToString()));
 
     private async Task<AppointmentModel.Response> GetResponseAsync(Guid id) =>
         await Project(AppointmentsQuery().Where(appointment => appointment.Id == id)).SingleAsync();
 
-    private async Task EnsurePatientOwnershipAsync(string dni, string patientEmail)
+    private async Task<ApplicationUser> EnsurePatientOwnershipAsync(string dni, string patientEmail)
     {
         var patient = await _authenticationContext.Set<ApplicationUser>()
             .AsNoTracking()
@@ -297,6 +254,7 @@ public sealed class AppointmentService(
         {
             throw new AuthorizationException();
         }
+        return patient;
     }
 
     private static void ValidateRequest(AppointmentModel.Request? request)
@@ -321,6 +279,12 @@ public sealed class AppointmentService(
     private static ValidationException Invalid(string field, string message) =>
         (ValidationException)new ValidationException(message, "APPOINTMENT_VALIDATION")
             .WithDetail(field, message);
+
+    private static bool IsUniqueConstraintViolation(DbUpdateException exception) =>
+        exception.InnerException is SqliteException { SqliteExtendedErrorCode: 2067 or 1555 };
+
+    private static ConflictException InvalidStatus() =>
+        new("APPOINTMENT_INVALID_STATUS", "Sólo se puede cancelar una cita en estado BOOKED.");
 
     private static ConflictException SlotConflict() =>
         (ConflictException)new ConflictException(

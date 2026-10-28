@@ -19,7 +19,9 @@ Los contextos `Dsw2026TpiDbContext` y `AuthenticationDbContext` comparten `Dsw20
 1. **Domain:** `Dsw2026TpiDbContext`.
 2. **Identity:** `AuthenticationDbContext`.
 
-Las migraciones actuales `AlignDoctorSoftDeleteContract` y `AddRevokedTokens` pertenecen a contextos distintos. Aplicar solamente uno deja incompleto el contrato de Doctor o la revocación de JWT.
+Las migraciones actuales `AlignDomainModel` y `AddRevokedTokens` pertenecen a contextos distintos. Aplicar solamente uno deja incompleto el modelo de dominio o la revocación de JWT.
+
+`AlignDomainModel` alinea el esquema con el modelo de datos del TPI: crea `PATIENTS` a partir de los DNI que ya tenían citas, reemplaza `APPOINTMENTS.PatientDni` y `APPOINTMENTS.DoctorId` por `PatientId`, agrega `CancelledAt` y `AttendedAt`, guarda el día de semana como número y vuelve obligatoria la especialidad del médico. Los médicos sin especialidad eran datos de prueba y la migración los elimina junto con sus disponibilidades, turnos y citas.
 
 ### Actualizar una base local existente
 

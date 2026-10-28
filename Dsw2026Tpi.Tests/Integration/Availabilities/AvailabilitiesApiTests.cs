@@ -77,20 +77,13 @@ public sealed class AvailabilitiesApiTests : IClassFixture<DoctorsApiFactory>
     {
         var doctor = await CreateActiveDoctorAsync();
         var date = new DateOnly(2026, 8, 12);
-        var rule = new AvailabilityRule
-        {
-            DoctorId = doctor.Id,
-            Year = date.Year,
-            Month = date.Month,
-            DayOfWeek = date.DayOfWeek.ToString(),
-            StartTime = new TimeOnly(9, 0),
-            EndTime = new TimeOnly(10, 0),
-            Deleted = true
-        };
         await using (var scope = _factory.Services.CreateAsyncScope())
         {
             var context = scope.ServiceProvider.GetRequiredService<Dsw2026TpiDbContext>();
-            context.AvailabilityRules.Add(rule);
+            var trackedDoctor = await context.Set<Doctor>().SingleAsync(candidate => candidate.Id == doctor.Id);
+            var rule = trackedDoctor.AddAvailability(
+                date.Year, date.Month, date.DayOfWeek, new TimeOnly(9, 0), new TimeOnly(10, 0), SeedNow);
+            rule.MarkAsDeleted(SeedNow);
             await context.SaveChangesAsync();
         }
 
@@ -171,30 +164,21 @@ public sealed class AvailabilitiesApiTests : IClassFixture<DoctorsApiFactory>
     public async Task Put_ReplacesOnlyFutureUnreservedSlotsAndPreservesHistory()
     {
         var doctor = await CreateActiveDoctorAsync();
-        var rule = new AvailabilityRule
-        {
-            DoctorId = doctor.Id,
-            Year = 2026,
-            Month = 8,
-            DayOfWeek = DayOfWeek.Monday.ToString(),
-            StartTime = new TimeOnly(9, 0),
-            EndTime = new TimeOnly(10, 0)
-        };
-        var past = Slot(rule, new DateOnly(2026, 8, 10), new TimeOnly(9, 0));
-        var futureAvailable = Slot(rule, new DateOnly(2026, 8, 17), new TimeOnly(9, 0));
-        var futureBooked = Slot(rule, new DateOnly(2026, 8, 17), new TimeOnly(9, 30), "BOOKED");
-        var appointment = new Appointment
-        {
-            DoctorId = doctor.Id,
-            AvailabilitySlotId = futureBooked.Id,
-            PatientDni = "23456789",
-            Reason = "Control anual",
-            Status = AppointmentStatus.BOOKED
-        };
+        AvailabilityRule rule;
+        AvailabilitySlot past, futureAvailable, futureBooked;
+        Appointment appointment;
         await using (var scope = _factory.Services.CreateAsyncScope())
         {
             var context = scope.ServiceProvider.GetRequiredService<Dsw2026TpiDbContext>();
-            context.AddRange(rule, past, futureAvailable, futureBooked, appointment);
+            var trackedDoctor = await context.Set<Doctor>().SingleAsync(candidate => candidate.Id == doctor.Id);
+            rule = trackedDoctor.AddAvailability(
+                2026, 8, DayOfWeek.Monday, new TimeOnly(9, 0), new TimeOnly(10, 0), SeedNow);
+            past = rule.AddSlot(new DateOnly(2026, 8, 10), new TimeOnly(9, 0), SeedNow);
+            futureAvailable = rule.AddSlot(new DateOnly(2026, 8, 17), new TimeOnly(9, 0), SeedNow);
+            futureBooked = rule.AddSlot(new DateOnly(2026, 8, 17), new TimeOnly(9, 30), SeedNow);
+            var patient = new Patient("23456789", null, SeedNow);
+            appointment = patient.Book(futureBooked, "Control anual", SeedNow);
+            context.Patients.Add(patient);
             await context.SaveChangesAsync();
         }
 
@@ -211,7 +195,7 @@ public sealed class AvailabilitiesApiTests : IClassFixture<DoctorsApiFactory>
         Assert.NotNull(await verification.AvailabilitySlots.FindAsync(past.Id));
         Assert.Null(await verification.AvailabilitySlots.FindAsync(futureAvailable.Id));
         var preservedBookedSlot = (await verification.AvailabilitySlots.FindAsync(futureBooked.Id))!;
-        Assert.Equal("BOOKED", preservedBookedSlot.Status);
+        Assert.Equal(SlotStatus.BOOKED, preservedBookedSlot.Status);
         Assert.True(preservedBookedSlot.Deleted);
         var persistedAppointment = await verification.Appointments.FindAsync(appointment.Id);
         Assert.NotNull(persistedAppointment);
@@ -221,7 +205,7 @@ public sealed class AvailabilitiesApiTests : IClassFixture<DoctorsApiFactory>
         Assert.Contains(
             await verification.AvailabilitySlots.Where(slot => slot.DoctorId == doctor.Id).ToListAsync(),
             slot => slot.SlotDate > DateOnly.FromDateTime(DoctorsApiFactory.AvailabilityNow.DateTime) &&
-                    slot.StartTime == new TimeOnly(10, 0) && slot.Status == "AVAILABLE");
+                    slot.StartTime == new TimeOnly(10, 0) && slot.Status == SlotStatus.AVAILABLE);
     }
 
     [Fact]
@@ -282,20 +266,7 @@ public sealed class AvailabilitiesApiTests : IClassFixture<DoctorsApiFactory>
         Days = [new AvailabilityDayDto { Day = day, StartTime = start, EndTime = end }]
     };
 
-    private static AvailabilitySlot Slot(
-        AvailabilityRule rule,
-        DateOnly date,
-        TimeOnly start,
-        string status = "AVAILABLE") => new()
-    {
-        AvailabilityRule = rule,
-        AvailabilityRuleId = rule.Id,
-        DoctorId = rule.DoctorId,
-        SlotDate = date,
-        StartTime = start,
-        EndTime = start.AddMinutes(30),
-        Status = status
-    };
+    private static DateTime SeedNow => DoctorsApiFactory.AvailabilityNow.UtcDateTime;
 
     private static string ToSpanishDay(DayOfWeek day) => day switch
     {

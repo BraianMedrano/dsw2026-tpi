@@ -10,12 +10,15 @@ using Dsw2026Tpi.Application.Services;
 using Dsw2026Tpi.CrossCutting.Exceptions;
 using Dsw2026Tpi.CrossCutting.Identity;
 using Dsw2026Tpi.CrossCutting.Resources;
+using Dsw2026Tpi.Data;
 using Dsw2026Tpi.Data.Identity;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -139,12 +142,19 @@ public sealed class AdministratorLoginTests : IAsyncLifetime
         services.AddScoped<ISignInService, SignInService>();
         services.AddScoped<JwtService>();
         services.AddScoped<ApplicationAuthenticationService>();
+        // El login del paciente también registra al paciente del dominio (RN06) en la misma base SQLite.
+        services.AddDbContext<Dsw2026TpiDbContext>(options => options.UseSqlite(_connection));
+        services.AddSingleton(TimeProvider.System);
+        services.AddScoped<IPatientRegistry, PatientRegistry>();
 
         _provider = services.BuildServiceProvider();
 
         await using var scope = _provider.CreateAsyncScope();
         var context = scope.ServiceProvider.GetRequiredService<AuthenticationDbContext>();
         await context.Database.EnsureCreatedAsync();
+        // EnsureCreated no crea tablas de un segundo contexto sobre una base existente.
+        var domainContext = scope.ServiceProvider.GetRequiredService<Dsw2026TpiDbContext>();
+        await domainContext.GetService<IRelationalDatabaseCreator>().CreateTablesAsync();
 
         var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
         Assert.True((await roleManager.CreateAsync(new IdentityRole(Roles.Administrator))).Succeeded);

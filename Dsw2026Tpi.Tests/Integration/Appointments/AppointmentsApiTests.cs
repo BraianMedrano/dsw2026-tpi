@@ -99,27 +99,31 @@ public sealed class AppointmentsApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AppointmentForLegacyDoctorWithoutSpecialityCanBeCreatedAndRead()
+    public async Task BookingAndCancellingGoThroughTheDomainPatientAndRecordCancellationDate()
     {
         var data = await CreateSlotAsync();
-        await using (var scope = _factory.Services.CreateAsyncScope())
-        {
-            var context = scope.ServiceProvider.GetRequiredService<Dsw2026TpiDbContext>();
-            await context.Set<Doctor>().Where(doctor => doctor.Id == data.Doctor.Id)
-                .ExecuteUpdateAsync(update => update.SetProperty(doctor => doctor.SpecialityId, (Guid?)null));
-        }
-        using var patient = await CreatePatientClientAsync("legacy-doctor@example.com", "10234567");
+        using var patient = await CreatePatientClientAsync("domain-patient@example.com", "10234567");
 
         var create = await patient.PostAsJsonAsync(
             "/api/appointments",
             Request(data.Doctor.Id, data.Slot.Id, "10234567"));
-
         Assert.Equal(HttpStatusCode.Created, create.StatusCode);
         var appointment = (await create.Content.ReadFromJsonAsync<AppointmentModel.Response>())!;
-        Assert.Null(appointment.SpecialtyId);
-        Assert.Null(appointment.Specialty);
-        Assert.Equal(appointment.Id, Assert.Single((await patient.GetFromJsonAsync<List<AppointmentModel.Response>>(
-            "/api/appointments/patient?dni=10234567"))!).Id);
+        Assert.Equal(data.Speciality.Id, appointment.SpecialtyId);
+
+        Assert.Equal(HttpStatusCode.OK, (await patient.DeleteAsync($"/api/appointments/{appointment.Id}")).StatusCode);
+
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var context = scope.ServiceProvider.GetRequiredService<Dsw2026TpiDbContext>();
+        var domainPatient = await context.Patients
+            .Include(candidate => candidate.Appointments)
+            .SingleAsync(candidate => candidate.Dni == "10234567");
+        Assert.NotNull(domainPatient.UserId);
+        var cancelled = Assert.Single(domainPatient.Appointments);
+        Assert.Equal(AppointmentStatus.CANCELLED, cancelled.Status);
+        Assert.Equal(Now.UtcDateTime, cancelled.CancelledAt);
+        Assert.Null(cancelled.AttendedAt);
+        Assert.Equal(SlotStatus.AVAILABLE, (await context.AvailabilitySlots.FindAsync(data.Slot.Id))!.Status);
     }
 
     [Fact]
@@ -225,12 +229,12 @@ public sealed class AppointmentsApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task HistoryIncludesEveryExplicitHistoricalStatusAndSupportsLegacyDoctor()
+    public async Task HistoryIncludesEveryExplicitHistoricalStatus()
     {
         using var patient = await CreatePatientClientAsync("history-statuses@example.com", "35792468");
         var cancelled = await AddAppointmentAsync("35792468", AppointmentStatus.CANCELLED);
         var attended = await AddAppointmentAsync("35792468", AppointmentStatus.ATTENDED);
-        var noShow = await AddAppointmentAsync("35792468", AppointmentStatus.NO_SHOW, legacyDoctor: true);
+        var noShow = await AddAppointmentAsync("35792468", AppointmentStatus.NO_SHOW);
         _ = await AddAppointmentAsync("35792468", AppointmentStatus.BOOKED);
 
         var history = (await patient.GetFromJsonAsync<AppointmentModel.PagedResponse>(
@@ -241,9 +245,9 @@ public sealed class AppointmentsApiTests : IAsyncLifetime
             ["ATTENDED", "CANCELLED", "NO_SHOW"],
             history.Data.Select(appointment => appointment.Status).Order().ToArray());
         Assert.DoesNotContain(history.Data, appointment => appointment.Status == "BOOKED");
-        var legacy = Assert.Single(history.Data, appointment => appointment.Id == noShow.Id);
-        Assert.Null(legacy.SpecialtyId);
-        Assert.Null(legacy.Specialty);
+        var noShowEntry = Assert.Single(history.Data, appointment => appointment.Id == noShow.Id);
+        Assert.NotNull(noShowEntry.SpecialtyId);
+        Assert.NotNull(noShowEntry.Specialty);
         Assert.Contains(history.Data, appointment => appointment.Id == cancelled.Id);
         Assert.Contains(history.Data, appointment => appointment.Id == attended.Id);
     }
@@ -256,7 +260,8 @@ public sealed class AppointmentsApiTests : IAsyncLifetime
         var appointment = await AddAppointmentAsync("46813579", AppointmentStatus.CANCELLED);
         await using var scope = _factory.Services.CreateAsyncScope();
         var context = scope.ServiceProvider.GetRequiredService<Dsw2026TpiDbContext>();
-        var doctor = (await context.Set<Doctor>().FindAsync(appointment.DoctorId))!;
+        var slot = (await context.AvailabilitySlots.FindAsync(appointment.AvailabilitySlotId))!;
+        var doctor = (await context.Set<Doctor>().FindAsync(slot.DoctorId))!;
 
         var forbidden = await other.GetAsync(
             "/api/appointments/patient/history?dni=46813579");
@@ -267,10 +272,10 @@ public sealed class AppointmentsApiTests : IAsyncLifetime
         var forbiddenBody = await forbidden.Content.ReadAsStringAsync();
         Assert.DoesNotContain(appointment.Id.ToString(), forbiddenBody, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(appointment.Reason, forbiddenBody, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain(appointment.DoctorId.ToString(), forbiddenBody, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(doctor.Id.ToString(), forbiddenBody, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(doctor.Name, forbiddenBody, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(appointment.AvailabilitySlotId.ToString(), forbiddenBody, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain(appointment.PatientDni, forbiddenBody, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("46813579", forbiddenBody, StringComparison.OrdinalIgnoreCase);
         await AssertErrorContractAsync(notFound, HttpStatusCode.NotFound, "ENTITY_NOTFOUND", false);
     }
 
@@ -524,12 +529,12 @@ public sealed class AppointmentsApiTests : IAsyncLifetime
     }
 
     [Theory]
-    [InlineData(false, AppointmentStatus.BOOKED, "BOOKED", true)]
-    [InlineData(true, AppointmentStatus.CANCELLED, "AVAILABLE", true)]
+    [InlineData(false, AppointmentStatus.BOOKED, SlotStatus.BOOKED, true)]
+    [InlineData(true, AppointmentStatus.CANCELLED, SlotStatus.AVAILABLE, true)]
     public async Task AvailabilityUpdatePreservesSlotsReferencedByAppointments(
         bool cancel,
         AppointmentStatus expectedAppointmentStatus,
-        string expectedSlotStatus,
+        SlotStatus expectedSlotStatus,
         bool expectedSlotDeleted)
     {
         var data = await CreateSlotAsync();
@@ -592,7 +597,7 @@ public sealed class AppointmentsApiTests : IAsyncLifetime
                 .ToListAsync();
             var preservedSlot = Assert.Single(matchingSlots);
             Assert.Equal(data.Slot.Id, preservedSlot.Id);
-            Assert.Equal("BOOKED", preservedSlot.Status);
+            Assert.Equal(SlotStatus.BOOKED, preservedSlot.Status);
             Assert.False(preservedSlot.Deleted);
         }
 
@@ -615,37 +620,42 @@ public sealed class AppointmentsApiTests : IAsyncLifetime
         AppointmentStatus status,
         DateOnly? date = null,
         TimeOnly? startTime = null,
-        bool legacyDoctor = false,
         Guid? id = null)
     {
         var data = await CreateSlotAsync();
         await using var scope = _factory.Services.CreateAsyncScope();
         var context = scope.ServiceProvider.GetRequiredService<Dsw2026TpiDbContext>();
-        var slot = await context.AvailabilitySlots.FindAsync(data.Slot.Id);
-        slot!.SlotDate = date ?? data.Slot.SlotDate;
-        slot.StartTime = startTime ?? data.Slot.StartTime;
-        slot.EndTime = slot.StartTime.AddMinutes(30);
-        if (legacyDoctor)
+        var now = Now.UtcDateTime;
+        var slot = (await context.AvailabilitySlots.FindAsync(data.Slot.Id))!;
+        var patient = await context.Patients.SingleOrDefaultAsync(candidate => candidate.Dni == patientDni);
+        if (patient is null)
         {
-            await context.Set<Doctor>()
-                .Where(doctor => doctor.Id == data.Doctor.Id)
-                .ExecuteUpdateAsync(update => update
-                    .SetProperty(doctor => doctor.SpecialityId, (Guid?)null));
+            patient = new Patient(patientDni, null, now);
+            context.Patients.Add(patient);
         }
 
-        var appointment = new Appointment
+        // Las transiciones pasan por el dominio: reservar, cancelar o cerrar la cita como lo haría el sistema.
+        var appointment = patient.Book(slot, "Consulta histórica", now, id);
+        switch (status)
         {
-            Id = id ?? Guid.NewGuid(),
-            DoctorId = data.Doctor.Id,
-            AvailabilitySlotId = data.Slot.Id,
-            PatientDni = patientDni,
-            Reason = "Consulta histórica",
-            Status = status,
-            CreatedAt = Now.UtcDateTime,
-            UpdatedAt = Now.UtcDateTime
-        };
-        context.Appointments.Add(appointment);
+            case AppointmentStatus.CANCELLED: appointment.Cancel(now); break;
+            case AppointmentStatus.ATTENDED: appointment.MarkAsAttended(now); break;
+            case AppointmentStatus.NO_SHOW: appointment.MarkAsNoShow(now); break;
+        }
         await context.SaveChangesAsync();
+
+        // Los casos históricos necesitan turnos en fechas arbitrarias; se ajustan directamente en la base de datos.
+        if (date.HasValue || startTime.HasValue)
+        {
+            var slotDate = date ?? data.Slot.SlotDate;
+            var slotStart = startTime ?? data.Slot.StartTime;
+            await context.AvailabilitySlots
+                .Where(candidate => candidate.Id == slot.Id)
+                .ExecuteUpdateAsync(update => update
+                    .SetProperty(candidate => candidate.SlotDate, slotDate)
+                    .SetProperty(candidate => candidate.StartTime, slotStart)
+                    .SetProperty(candidate => candidate.EndTime, slotStart.AddMinutes(30)));
+        }
         return appointment;
     }
 
@@ -672,26 +682,10 @@ public sealed class AppointmentsApiTests : IAsyncLifetime
         var context = scope.ServiceProvider.GetRequiredService<Dsw2026TpiDbContext>();
         var speciality = new Speciality($"Especialidad {Guid.NewGuid():N}", "Especialidad para pruebas de citas.");
         var doctor = new Doctor($"Médico {Guid.NewGuid():N}", $"MP-{Guid.NewGuid():N}", speciality);
-        var rule = new AvailabilityRule
-        {
-            DoctorId = doctor.Id,
-            Doctor = doctor,
-            Month = 8,
-            Year = 2026,
-            DayOfWeek = DayOfWeek.Tuesday.ToString(),
-            StartTime = new TimeOnly(9, 0),
-            EndTime = new TimeOnly(10, 0)
-        };
-        var slot = new AvailabilitySlot
-        {
-            AvailabilityRule = rule,
-            AvailabilityRuleId = rule.Id,
-            DoctorId = doctor.Id,
-            SlotDate = new DateOnly(2026, 8, 11),
-            StartTime = new TimeOnly(9, 0),
-            EndTime = new TimeOnly(9, 30)
-        };
-        context.AddRange(speciality, doctor, rule, slot);
+        var rule = doctor.AddAvailability(
+            2026, 8, DayOfWeek.Tuesday, new TimeOnly(9, 0), new TimeOnly(10, 0), Now.UtcDateTime);
+        var slot = rule.AddSlot(new DateOnly(2026, 8, 11), new TimeOnly(9, 0), Now.UtcDateTime);
+        context.AddRange(speciality, doctor);
         await context.SaveChangesAsync();
         return (speciality, doctor, slot);
     }

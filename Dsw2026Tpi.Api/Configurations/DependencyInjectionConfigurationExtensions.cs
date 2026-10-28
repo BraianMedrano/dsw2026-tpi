@@ -18,6 +18,7 @@ public static class DependencyInjectionConfigurationExtensions
         services.AddScoped<ISignInService, SignInService>();
         services.AddScoped<IAvailabilityService, AvailabilityService>();
         services.AddScoped<IAppointmentService, AppointmentService>();
+        services.AddScoped<IPatientRegistry, PatientRegistry>();
         services.AddSingleton<TimeProvider>(TimeProvider.System);
         services.AddScoped<InitialAdministratorBootstrapper>();
         services.AddScoped<ApplicationStartupInitializer>();

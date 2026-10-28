@@ -18,8 +18,9 @@ public class DoctorConfiguration : IEntityTypeConfiguration<Doctor>
             .IsRequired();
 
         builder.HasOne(doctor => doctor.Speciality)
-            .WithMany()
+            .WithMany(speciality => speciality.Doctors)
             .HasForeignKey(doctor => doctor.SpecialityId)
+            .IsRequired()
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasQueryFilter(doctor => !doctor.Deleted);

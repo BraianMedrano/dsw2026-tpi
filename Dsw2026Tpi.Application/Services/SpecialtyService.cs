@@ -67,11 +67,7 @@ public class SpecialtyService : ISpecialtyService
             .FirstOrDefaultAsync(s => s.Id == id)
             ?? throw new EntityNotFoundException("Especialidad");
 
-        _context.Entry(specialty).CurrentValues.SetValues(new
-        {
-            Name = request.Name,
-            Description = request.Description
-        });
+        specialty.Update(request.Name, request.Description);
 
         await _context.SaveChangesAsync();
 
