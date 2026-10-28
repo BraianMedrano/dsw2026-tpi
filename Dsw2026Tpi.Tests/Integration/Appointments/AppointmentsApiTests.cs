@@ -127,6 +127,26 @@ public sealed class AppointmentsApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task CancellingAnAlreadyCancelledAppointmentReturnsInvalidStatus()
+    {
+        var data = await CreateSlotAsync();
+        using var patient = await CreatePatientClientAsync("double-cancel@example.com", "11234567");
+        var create = await patient.PostAsJsonAsync(
+            "/api/appointments",
+            Request(data.Doctor.Id, data.Slot.Id, "11234567"));
+        var appointment = (await create.Content.ReadFromJsonAsync<AppointmentModel.Response>())!;
+        Assert.Equal(HttpStatusCode.OK, (await patient.DeleteAsync($"/api/appointments/{appointment.Id}")).StatusCode);
+
+        var second = await patient.DeleteAsync($"/api/appointments/{appointment.Id}");
+
+        await AssertErrorContractAsync(second, HttpStatusCode.Conflict, "APPOINTMENT_INVALID_STATUS", false);
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var context = scope.ServiceProvider.GetRequiredService<Dsw2026TpiDbContext>();
+        Assert.Equal(AppointmentStatus.CANCELLED, (await context.Appointments.FindAsync(appointment.Id))!.Status);
+        Assert.Equal(SlotStatus.AVAILABLE, (await context.AvailabilitySlots.FindAsync(data.Slot.Id))!.Status);
+    }
+
+    [Fact]
     public async Task AdministratorCanFilterByDateAndCombinedPagedCriteria()
     {
         var data = await CreateSlotAsync();
