@@ -20,21 +20,21 @@ namespace Dsw2026Tpi.Data.Migrations.Domain
             modelBuilder.Entity("Dsw2026Tpi.Domain.Entities.Appointment", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("AttendedAt")
                         .HasColumnType("TEXT");
 
                     b.Property<Guid>("AvailabilitySlotId")
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTime?>("CancelledAt")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("DoctorId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("PatientDni")
-                        .IsRequired()
-                        .HasMaxLength(8)
+                    b.Property<Guid>("PatientId")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Reason")
@@ -43,6 +43,7 @@ namespace Dsw2026Tpi.Data.Migrations.Domain
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Status")
+                        .IsConcurrencyToken()
                         .IsRequired()
                         .HasMaxLength(20)
                         .HasColumnType("TEXT");
@@ -52,11 +53,11 @@ namespace Dsw2026Tpi.Data.Migrations.Domain
 
                     b.HasKey("Id");
 
-                    b.HasIndex("AvailabilitySlotId");
+                    b.HasIndex("AvailabilitySlotId")
+                        .IsUnique()
+                        .HasFilter("\"Status\" = 'BOOKED'");
 
-                    b.HasIndex("PatientDni");
-
-                    b.HasIndex("DoctorId", "AvailabilitySlotId");
+                    b.HasIndex("PatientId");
 
                     b.ToTable("APPOINTMENTS", (string)null);
                 });
@@ -64,16 +65,13 @@ namespace Dsw2026Tpi.Data.Migrations.Domain
             modelBuilder.Entity("Dsw2026Tpi.Domain.Entities.AvailabilityRule", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("DayOfWeek")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("TEXT");
+                    b.Property<int>("DayOfWeek")
+                        .HasColumnType("INTEGER");
 
                     b.Property<bool>("Deleted")
                         .ValueGeneratedOnAdd()
@@ -92,7 +90,7 @@ namespace Dsw2026Tpi.Data.Migrations.Domain
                     b.Property<TimeOnly>("StartTime")
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTime?>("UpdatedAt")
+                    b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("TEXT");
 
                     b.Property<int>("Year")
@@ -109,7 +107,6 @@ namespace Dsw2026Tpi.Data.Migrations.Domain
             modelBuilder.Entity("Dsw2026Tpi.Domain.Entities.AvailabilitySlot", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT");
 
                     b.Property<Guid>("AvailabilityRuleId")
@@ -136,13 +133,12 @@ namespace Dsw2026Tpi.Data.Migrations.Domain
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Status")
+                        .IsConcurrencyToken()
                         .IsRequired()
-                        .ValueGeneratedOnAdd()
                         .HasMaxLength(20)
-                        .HasColumnType("TEXT")
-                        .HasDefaultValue("AVAILABLE");
+                        .HasColumnType("TEXT");
 
-                    b.Property<DateTime?>("UpdatedAt")
+                    b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
@@ -158,7 +154,6 @@ namespace Dsw2026Tpi.Data.Migrations.Domain
             modelBuilder.Entity("Dsw2026Tpi.Domain.Entities.Doctor", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime>("CreatedAt")
@@ -176,7 +171,7 @@ namespace Dsw2026Tpi.Data.Migrations.Domain
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("SpecialityId")
+                    b.Property<Guid>("SpecialityId")
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime>("UpdatedAt")
@@ -189,10 +184,53 @@ namespace Dsw2026Tpi.Data.Migrations.Domain
                     b.ToTable("Doctors", (string)null);
                 });
 
+            modelBuilder.Entity("Dsw2026Tpi.Domain.Entities.Patient", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Deleted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false);
+
+                    b.Property<string>("Dni")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FullName")
+                        .HasMaxLength(150)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Phone")
+                        .HasMaxLength(30)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserId")
+                        .HasMaxLength(450)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Dni")
+                        .IsUnique();
+
+                    b.HasIndex("UserId")
+                        .IsUnique();
+
+                    b.ToTable("PATIENTS", (string)null);
+                });
+
             modelBuilder.Entity("Dsw2026Tpi.Domain.Entities.Speciality", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime>("CreatedAt")
@@ -220,26 +258,26 @@ namespace Dsw2026Tpi.Data.Migrations.Domain
             modelBuilder.Entity("Dsw2026Tpi.Domain.Entities.Appointment", b =>
                 {
                     b.HasOne("Dsw2026Tpi.Domain.Entities.AvailabilitySlot", "AvailabilitySlot")
-                        .WithMany()
+                        .WithMany("Appointments")
                         .HasForeignKey("AvailabilitySlotId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("Dsw2026Tpi.Domain.Entities.Doctor", "Doctor")
-                        .WithMany()
-                        .HasForeignKey("DoctorId")
+                    b.HasOne("Dsw2026Tpi.Domain.Entities.Patient", "Patient")
+                        .WithMany("Appointments")
+                        .HasForeignKey("PatientId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
                     b.Navigation("AvailabilitySlot");
 
-                    b.Navigation("Doctor");
+                    b.Navigation("Patient");
                 });
 
             modelBuilder.Entity("Dsw2026Tpi.Domain.Entities.AvailabilityRule", b =>
                 {
                     b.HasOne("Dsw2026Tpi.Domain.Entities.Doctor", "Doctor")
-                        .WithMany()
+                        .WithMany("Availabilities")
                         .HasForeignKey("DoctorId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
@@ -261,9 +299,10 @@ namespace Dsw2026Tpi.Data.Migrations.Domain
             modelBuilder.Entity("Dsw2026Tpi.Domain.Entities.Doctor", b =>
                 {
                     b.HasOne("Dsw2026Tpi.Domain.Entities.Speciality", "Speciality")
-                        .WithMany()
+                        .WithMany("Doctors")
                         .HasForeignKey("SpecialityId")
-                        .OnDelete(DeleteBehavior.Restrict);
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
 
                     b.Navigation("Speciality");
                 });
@@ -271,6 +310,26 @@ namespace Dsw2026Tpi.Data.Migrations.Domain
             modelBuilder.Entity("Dsw2026Tpi.Domain.Entities.AvailabilityRule", b =>
                 {
                     b.Navigation("Slots");
+                });
+
+            modelBuilder.Entity("Dsw2026Tpi.Domain.Entities.AvailabilitySlot", b =>
+                {
+                    b.Navigation("Appointments");
+                });
+
+            modelBuilder.Entity("Dsw2026Tpi.Domain.Entities.Doctor", b =>
+                {
+                    b.Navigation("Availabilities");
+                });
+
+            modelBuilder.Entity("Dsw2026Tpi.Domain.Entities.Patient", b =>
+                {
+                    b.Navigation("Appointments");
+                });
+
+            modelBuilder.Entity("Dsw2026Tpi.Domain.Entities.Speciality", b =>
+                {
+                    b.Navigation("Doctors");
                 });
 #pragma warning restore 612, 618
         }

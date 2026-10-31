@@ -27,10 +27,13 @@ namespace Dsw2026Tpi.Data.Configurations
             builder.Property(e => e.EndTime)
                 .IsRequired();
 
+            // El estado es token de concurrencia: sólo una reserva puede pasar el turno de AVAILABLE a BOOKED,
+            // aunque dos solicitudes lo hayan leído disponible al mismo tiempo (UPDATE ... WHERE Status = 'AVAILABLE').
             builder.Property(e => e.Status)
+                .HasConversion<string>()
                 .IsRequired()
                 .HasMaxLength(20)
-                .HasDefaultValue("AVAILABLE");
+                .IsConcurrencyToken();
 
             builder.Property(e => e.Deleted)
                 .HasDefaultValue(false);
@@ -42,7 +45,6 @@ namespace Dsw2026Tpi.Data.Configurations
 
             builder.HasIndex(e => e.AvailabilityRuleId);
 
-           
             builder.HasOne(e => e.AvailabilityRule)
                 .WithMany(r => r.Slots)
                 .HasForeignKey(e => e.AvailabilityRuleId)

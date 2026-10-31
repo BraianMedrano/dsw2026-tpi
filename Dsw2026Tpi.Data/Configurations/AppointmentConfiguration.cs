@@ -11,35 +11,30 @@ public sealed class AppointmentConfiguration : IEntityTypeConfiguration<Appointm
         builder.ToTable("APPOINTMENTS");
         builder.HasKey(appointment => appointment.Id);
 
-        builder.Property(appointment => appointment.PatientDni)
-            .HasMaxLength(8)
-            .IsRequired();
         builder.Property(appointment => appointment.Reason)
             .HasMaxLength(500)
             .IsRequired();
+        // El estado es token de concurrencia: dos cancelaciones simultáneas no pueden pasar ambas desde BOOKED.
         builder.Property(appointment => appointment.Status)
             .HasConversion<string>()
             .HasMaxLength(20)
-            .IsRequired();
+            .IsRequired()
+            .IsConcurrencyToken();
 
-        builder.HasOne(appointment => appointment.Doctor)
-            .WithMany()
-            .HasForeignKey(appointment => appointment.DoctorId)
+        builder.HasOne(appointment => appointment.Patient)
+            .WithMany(patient => patient.Appointments)
+            .HasForeignKey(appointment => appointment.PatientId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne(appointment => appointment.AvailabilitySlot)
-            .WithMany()
+            .WithMany(slot => slot.Appointments)
             .HasForeignKey(appointment => appointment.AvailabilitySlotId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasIndex(appointment => appointment.PatientDni);
-
-        // Este índice acelera la navegación Appointment -> AvailabilitySlot, pero NO es UNIQUE a propósito.
-        // AppointmentService.CancelAsync conserva la cita CANCELLED y libera el slot; después
-        // AppointmentService.CreateAsync puede insertar una nueva cita BOOKED para ese mismo slot.
-        // La exclusión simultánea la garantiza el UPDATE condicional AVAILABLE -> BOOKED de CreateAsync,
-        // no una unicidad que borraría la posibilidad de conservar historia. La regresión completa está en
-        // AppointmentsApiTests.PatientCanCancelAndConcurrentRebookingPreservesHistoryAsync.
-        builder.HasIndex(appointment => appointment.AvailabilitySlotId);
-        builder.HasIndex(appointment => new { appointment.DoctorId, appointment.AvailabilitySlotId });
+        // Turno 1 -> 0..1 Cita. El modelo de datos marca availability_slot_id como UNIQUE, pero CU03 devuelve el
+        // turno a disponible al cancelar; con un UNIQUE estricto ese turno no podría volver a reservarse.
+        // El filtro conserva las citas CANCELLED como historial y garantiza una única cita BOOKED por turno.
+        builder.HasIndex(appointment => appointment.AvailabilitySlotId)
+            .IsUnique()
+            .HasFilter("\"Status\" = 'BOOKED'");
     }
 }

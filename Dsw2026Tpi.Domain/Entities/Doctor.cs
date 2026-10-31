@@ -1,12 +1,19 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace Dsw2026Tpi.Domain.Entities;
 
 public class Doctor : EntityBase
 {
+    // Medico 1 -> * Disponibilidad: la colección es privada y sólo crece mediante AddAvailability.
+    private readonly List<AvailabilityRule> _availabilities = [];
+
     public string Name { get; private set; }
     public string LicenseNumber { get; private set; }
     public bool Deleted { get; private set; }
-    public Guid? SpecialityId { get; private set; }
-    public Speciality? Speciality { get; private set; }
+    // Medico * -> 1 Especialidad: la especialidad es obligatoria.
+    public Guid SpecialityId { get; private set; }
+    public Speciality Speciality { get; private set; }
+    public IReadOnlyCollection<AvailabilityRule> Availabilities => _availabilities.AsReadOnly();
 
     #region Constructor for EF
 #pragma warning disable CS8618
@@ -20,8 +27,7 @@ public class Doctor : EntityBase
     {
         Name = name;
         LicenseNumber = licenseNumber;
-        Speciality = speciality;
-        SpecialityId = speciality.Id;
+        AssignSpeciality(speciality);
         Deleted = false;
     }
 
@@ -29,12 +35,26 @@ public class Doctor : EntityBase
     {
         Name = name;
         LicenseNumber = licenseNumber;
-        Speciality = speciality;
-        SpecialityId = speciality.Id;
+        AssignSpeciality(speciality);
     }
 
     public void MarkAsDeleted()
     {
         Deleted = true;
+    }
+
+    public AvailabilityRule AddAvailability(int year, int month, DayOfWeek dayOfWeek, TimeOnly startTime, TimeOnly endTime, DateTime now)
+    {
+        var rule = new AvailabilityRule(this, year, month, dayOfWeek, startTime, endTime, now);
+        _availabilities.Add(rule);
+        return rule;
+    }
+
+    [MemberNotNull(nameof(Speciality))]
+    private void AssignSpeciality(Speciality speciality)
+    {
+        ArgumentNullException.ThrowIfNull(speciality);
+        Speciality = speciality;
+        SpecialityId = speciality.Id;
     }
 }

@@ -13,7 +13,7 @@ namespace Dsw2026Tpi.Application.Services;
 
 public class AvailabilityService(Dsw2026TpiDbContext context, TimeProvider timeProvider) : IAvailabilityService
 {
-    private const int SlotMinutes = 30;
+    private const int SlotMinutes = AvailabilityRule.SlotMinutes;
     private readonly Dsw2026TpiDbContext _context = context;
     private readonly TimeProvider _timeProvider = timeProvider;
 
@@ -40,12 +40,11 @@ public class AvailabilityService(Dsw2026TpiDbContext context, TimeProvider timeP
             .AsNoTracking()
             .Where(slot =>
                 !slot.Deleted &&
-                slot.Status == "AVAILABLE" &&
+                slot.Status == SlotStatus.AVAILABLE &&
                 !slot.AvailabilityRule.Deleted &&
                 slot.DoctorId == slot.AvailabilityRule.DoctorId &&
                 !slot.AvailabilityRule.Doctor.Deleted &&
-                slot.AvailabilityRule.Doctor.SpecialityId != null &&
-                !slot.AvailabilityRule.Doctor.Speciality!.Deleted &&
+                !slot.AvailabilityRule.Doctor.Speciality.Deleted &&
                 (slot.SlotDate > today ||
                  slot.SlotDate == today && slot.StartTime > currentTime));
 
@@ -68,7 +67,7 @@ public class AvailabilityService(Dsw2026TpiDbContext context, TimeProvider timeP
                 slot.EndTime,
                 slot.AvailabilityRule.Doctor.Id,
                 slot.AvailabilityRule.Doctor.Name,
-                slot.AvailabilityRule.Doctor.Speciality!.Id,
+                slot.AvailabilityRule.Doctor.Speciality.Id,
                 slot.AvailabilityRule.Doctor.Speciality.Name))
             .ToListAsync();
 
@@ -86,7 +85,7 @@ public class AvailabilityService(Dsw2026TpiDbContext context, TimeProvider timeP
     {
         var now = _timeProvider.GetLocalNow().DateTime;
         var candidates = ValidateAndNormalize(request);
-        await EnsureActiveDoctorAsync(request.DoctorId);
+        var doctor = await FindActiveDoctorAsync(request.DoctorId);
         // El calendario es configuración obligatoria y se valida antes de abrir la transacción.
         var holidays = LoadNonWorkingDays();
 
@@ -97,7 +96,7 @@ public class AvailabilityService(Dsw2026TpiDbContext context, TimeProvider timeP
         await using var transaction = await _context.Database.BeginTransactionAsync();
         try
         {
-            var created = AddRules(request.DoctorId, candidates, now, holidays);
+            var created = AddRules(doctor, candidates, now, holidays);
             await _context.SaveChangesAsync();
             await transaction.CommitAsync();
             return created.Select(ToResponse).ToList();
@@ -118,7 +117,7 @@ public class AvailabilityService(Dsw2026TpiDbContext context, TimeProvider timeP
     {
         var now = _timeProvider.GetLocalNow().DateTime;
         var candidates = ValidateAndNormalize(request);
-        await EnsureActiveDoctorAsync(request.DoctorId);
+        var doctor = await FindActiveDoctorAsync(request.DoctorId);
         var holidays = LoadNonWorkingDays();
 
         // PUT reemplaza sólo los slots futuros disponibles dentro de una transacción; un fallo conserva el estado anterior.
@@ -151,37 +150,29 @@ public class AvailabilityService(Dsw2026TpiDbContext context, TimeProvider timeP
 
             foreach (var rule in previous)
             {
-                requestedByDay.TryGetValue(rule.DayOfWeek, out var candidate);
-                RemoveReplaceableSlots(rule, now, protectedSlotIds, candidate, holidays);
-                if (candidate is not null)
+                if (requestedByDay.Remove(rule.DayOfWeek, out var candidate))
                 {
-                    requestedByDay.Remove(rule.DayOfWeek);
-                    rule.StartTime = candidate.Start;
-                    rule.EndTime = candidate.End;
-                    rule.Deleted = false;
-                    rule.UpdatedAt = now;
-                    // Esta foto separa los slots ya persistidos de los que GenerateFutureSlots agregará a la colección.
-                    var preservedSlotIds = rule.Slots.Select(slot => slot.Id).ToHashSet();
-                    GenerateFutureSlots(rule, now, holidays);
-                    // Con una regla ya trackeada, EF interpreta un dependiente con Guid asignado como existente.
-                    // Marcar explícitamente los slots nuevos como Added evita un UPDATE que no encuentra ninguna fila.
-                    _context.AvailabilitySlots.AddRange(
-                        rule.Slots.Where(slot => !preservedSlotIds.Contains(slot.Id)));
+                    rule.Reschedule(candidate.Start, candidate.End, now);
+                    RemoveReplaceableSlots(rule, now, protectedSlotIds, holidays, ruleStaysActive: true);
+                    // Los slots nuevos se agregan a la colección de la regla y EF los inserta al guardar.
+                    rule.GenerateSlots(now, holidays);
                     replacement.Add(rule);
+                    continue;
                 }
-                else if (rule.Slots.Count == 0)
+
+                RemoveReplaceableSlots(rule, now, protectedSlotIds, holidays, ruleStaysActive: false);
+                if (rule.Slots.Count == 0)
                 {
                     _context.AvailabilityRules.Remove(rule);
                 }
                 else
                 {
                     // La regla padre se conserva sólo porque sus slots históricos o reservados mantienen una FK hacia ella.
-                    rule.Deleted = true;
-                    rule.UpdatedAt = now;
+                    rule.MarkAsDeleted(now);
                 }
             }
 
-            replacement.AddRange(AddRules(request.DoctorId, requestedByDay.Values, now, holidays));
+            replacement.AddRange(AddRules(doctor, requestedByDay.Values, now, holidays));
             await _context.SaveChangesAsync();
             await transaction.CommitAsync();
             return replacement.Select(ToResponse).ToList();
@@ -202,40 +193,34 @@ public class AvailabilityService(Dsw2026TpiDbContext context, TimeProvider timeP
         AvailabilityRule rule,
         DateTime now,
         HashSet<Guid> protectedSlotIds,
-        NormalizedDay? replacement,
-        HashSet<DateOnly> holidays)
+        HashSet<DateOnly> holidays,
+        bool ruleStaysActive)
     {
-        foreach (var slot in rule.Slots.Where(slot => IsFuture(slot, now)).ToList())
+        foreach (var slot in rule.Slots.Where(slot => slot.IsFutureAt(now)).ToList())
         {
-            var mustPreserve = slot.Status != "AVAILABLE" || protectedSlotIds.Contains(slot.Id);
+            var mustPreserve = !slot.IsFree || protectedSlotIds.Contains(slot.Id);
             if (mustPreserve)
             {
                 // La fila se conserva por la reserva o su historial, pero sólo sigue activa si pertenece al nuevo horario.
-                slot.Deleted = replacement is null || !BelongsTo(slot, replacement, holidays);
-                slot.UpdatedAt = now;
+                if (ruleStaysActive && rule.Covers(slot, holidays))
+                    slot.Restore(now);
+                else
+                    slot.MarkAsDeleted(now);
                 continue;
             }
 
-            rule.Slots.Remove(slot);
+            rule.RemoveSlot(slot);
             _context.AvailabilitySlots.Remove(slot);
         }
     }
 
-    private static bool IsFuture(AvailabilitySlot slot, DateTime now) =>
-        slot.SlotDate.ToDateTime(slot.StartTime) > now;
-
-    private static bool BelongsTo(
-        AvailabilitySlot slot,
-        NormalizedDay replacement,
-        HashSet<DateOnly> holidays) =>
-        slot.SlotDate.DayOfWeek.ToString() == replacement.Day &&
-        !holidays.Contains(slot.SlotDate) &&
-        slot.StartTime >= replacement.Start &&
-        slot.EndTime <= replacement.End;
-
     private IQueryable<AvailabilityRule> CurrentRulesQuery(Guid doctorId, DateTime now) =>
         _context.AvailabilityRules.Where(rule =>
             rule.DoctorId == doctorId && rule.Year == now.Year && rule.Month == now.Month && !rule.Deleted);
+
+    private async Task<Doctor> FindActiveDoctorAsync(Guid doctorId) =>
+        await _context.Set<Doctor>().FirstOrDefaultAsync(doctor => doctor.Id == doctorId && doctorId != Guid.Empty)
+            ?? throw new EntityNotFoundException("Médico");
 
     private async Task EnsureActiveDoctorAsync(Guid doctorId)
     {
@@ -274,8 +259,8 @@ public class AvailabilityService(Dsw2026TpiDbContext context, TimeProvider timeP
     }
 
 
-    private List<AvailabilityRule> AddRules(
-        Guid doctorId,
+    private static List<AvailabilityRule> AddRules(
+        Doctor doctor,
         IEnumerable<NormalizedDay> days,
         DateTime now,
         HashSet<DateOnly> holidays)
@@ -283,37 +268,12 @@ public class AvailabilityService(Dsw2026TpiDbContext context, TimeProvider timeP
         var result = new List<AvailabilityRule>();
         foreach (var day in days)
         {
-            var rule = new AvailabilityRule { DoctorId = doctorId, Year = now.Year, Month = now.Month, DayOfWeek = day.Day, StartTime = day.Start, EndTime = day.End };
-            GenerateFutureSlots(rule, now, holidays);
-            _context.AvailabilityRules.Add(rule);
+            // La regla nace dentro del agregado Medico y genera sus propios turnos; EF inserta ambos al guardar.
+            var rule = doctor.AddAvailability(now.Year, now.Month, day.Day, day.Start, day.End, now);
+            rule.GenerateSlots(now, holidays);
             result.Add(rule);
         }
         return result;
-    }
-
-    private static void GenerateFutureSlots(AvailabilityRule rule, DateTime now, HashSet<DateOnly> holidays)
-    {
-        var today = DateOnly.FromDateTime(now);
-        var currentTime = TimeOnly.FromDateTime(now);
-        var targetDay = Enum.Parse<DayOfWeek>(rule.DayOfWeek);
-        var lastDay = DateTime.DaysInMonth(rule.Year, rule.Month);
-        // Se recorre únicamente el resto del mes y se descartan pasado y feriados antes de crear entidades.
-        for (var number = today.Day; number <= lastDay; number++)
-        {
-            var date = new DateOnly(rule.Year, rule.Month, number);
-            if (date.DayOfWeek != targetDay || holidays.Contains(date)) continue;
-            for (var start = rule.StartTime; start.AddMinutes(SlotMinutes) <= rule.EndTime; start = start.AddMinutes(SlotMinutes))
-            {
-                if (date == today && start <= currentTime) continue;
-                var existing = rule.Slots.FirstOrDefault(slot => slot.SlotDate == date && slot.StartTime == start);
-                if (existing is not null)
-                {
-                    if (existing.Status == "AVAILABLE") existing.Deleted = false;
-                    continue;
-                }
-                rule.Slots.Add(new AvailabilitySlot { DoctorId = rule.DoctorId, SlotDate = date, StartTime = start, EndTime = start.AddMinutes(SlotMinutes), Status = "AVAILABLE" });
-            }
-        }
     }
 
     private static HashSet<DateOnly> LoadNonWorkingDays()
@@ -353,13 +313,14 @@ public class AvailabilityService(Dsw2026TpiDbContext context, TimeProvider timeP
         }
     }
 
-    private static bool TryNormalizeDay(string? input, out string day)
+    private static bool TryNormalizeDay(string? input, out DayOfWeek day)
     {
         var key = (input ?? string.Empty).Trim().Normalize(NormalizationForm.FormD)
             .Where(character => CharUnicodeInfo.GetUnicodeCategory(character) != UnicodeCategory.NonSpacingMark)
             .Aggregate(string.Empty, (text, character) => text + character).ToUpperInvariant();
-        day = key switch { "LUNES" => nameof(DayOfWeek.Monday), "MARTES" => nameof(DayOfWeek.Tuesday), "MIERCOLES" => nameof(DayOfWeek.Wednesday), "JUEVES" => nameof(DayOfWeek.Thursday), "VIERNES" => nameof(DayOfWeek.Friday), "SABADO" => nameof(DayOfWeek.Saturday), "DOMINGO" => nameof(DayOfWeek.Sunday), _ => string.Empty };
-        return day.Length > 0;
+        DayOfWeek? parsed = key switch { "LUNES" => DayOfWeek.Monday, "MARTES" => DayOfWeek.Tuesday, "MIERCOLES" => DayOfWeek.Wednesday, "JUEVES" => DayOfWeek.Thursday, "VIERNES" => DayOfWeek.Friday, "SABADO" => DayOfWeek.Saturday, "DOMINGO" => DayOfWeek.Sunday, _ => null };
+        day = parsed.GetValueOrDefault();
+        return parsed.HasValue;
     }
 
     private static bool TryParseStrictTime(string? value, out TimeOnly time) =>
@@ -374,14 +335,14 @@ public class AvailabilityService(Dsw2026TpiDbContext context, TimeProvider timeP
     private static ServiceUnavailableException CalendarUnavailable(Exception? innerException = null) =>
         new("AVAILABILITY_CALENDAR_UNAVAILABLE", "El calendario de días no laborables no está disponible o es inválido.", innerException);
 
-    private static DoctorAvailabilityResponseDto ToResponse(AvailabilityRule rule) => new() { Id = rule.Id, Day = ToSpanishDay(Enum.Parse<DayOfWeek>(rule.DayOfWeek)), StartTime = rule.StartTime.ToString("HH:mm"), EndTime = rule.EndTime.ToString("HH:mm") };
+    private static DoctorAvailabilityResponseDto ToResponse(AvailabilityRule rule) => new() { Id = rule.Id, Day = ToSpanishDay(rule.DayOfWeek), StartTime = rule.StartTime.ToString("HH:mm"), EndTime = rule.EndTime.ToString("HH:mm") };
     private static string ToSpanishDay(DayOfWeek day) => day switch
     {
         DayOfWeek.Monday => "LUNES", DayOfWeek.Tuesday => "MARTES", DayOfWeek.Wednesday => "MIÉRCOLES",
         DayOfWeek.Thursday => "JUEVES", DayOfWeek.Friday => "VIERNES", DayOfWeek.Saturday => "SÁBADO", _ => "DOMINGO"
     };
 
-    private sealed record NormalizedDay(string Day, TimeOnly Start, TimeOnly End);
+    private sealed record NormalizedDay(DayOfWeek Day, TimeOnly Start, TimeOnly End);
     private sealed record AvailableSlotProjection(
         Guid AvailabilitySlotId,
         DateOnly Date,

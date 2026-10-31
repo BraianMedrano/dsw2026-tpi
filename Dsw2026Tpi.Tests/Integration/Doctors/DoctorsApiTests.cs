@@ -276,28 +276,18 @@ public class DoctorsApiTests : IClassFixture<DoctorsApiFactory>
     }
 
     [Fact]
-    public async Task GetAll_ReturnsLegacyDoctorWithoutSpeciality()
+    public async Task Doctors_RequireSpecialityAtDatabaseLevel()
     {
-        using var client = _factory.CreateAdministratorClient();
-        var id = Guid.NewGuid();
-        var marker = Guid.NewGuid().ToString("N")[..8];
+        using var scope = _factory.Services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<Dsw2026TpiDbContext>();
+        var now = DateTime.UtcNow;
 
-        using (var scope = _factory.Services.CreateScope())
-        {
-            var context = scope.ServiceProvider.GetRequiredService<Dsw2026TpiDbContext>();
-            var now = DateTime.UtcNow;
-            await context.Database.ExecuteSqlInterpolatedAsync($"""
-                INSERT INTO Doctors (Id, Name, LicenseNumber, Deleted, SpecialityId, CreatedAt, UpdatedAt)
-                VALUES ({id}, {$"Médico legado {marker}"}, {"MP-LEGACY"}, {false}, NULL, {now}, {now})
-                """);
-        }
-
-        var page = await GetPage(client, $"?name={marker}");
-
-        Assert.Equal(1, page.Total);
-        var doctor = Assert.Single(page.Data);
-        Assert.Equal(id, doctor.Id);
-        Assert.Null(doctor.Specialty);
+        // Medico * -> 1 Especialidad: la columna ya no admite médicos sin especialidad.
+        var exception = await Assert.ThrowsAsync<SqliteException>(() => context.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO Doctors (Id, Name, LicenseNumber, Deleted, SpecialityId, CreatedAt, UpdatedAt)
+            VALUES ({Guid.NewGuid()}, {"Médico sin especialidad"}, {"MP-NULL"}, {false}, NULL, {now}, {now})
+            """));
+        Assert.Contains("NOT NULL", exception.Message);
     }
 
     [Fact]
@@ -409,7 +399,7 @@ public class DoctorsApiTests : IClassFixture<DoctorsApiFactory>
             }
         }
 
-        Assert.True(specialityIdAllowsNull);
+        Assert.False(specialityIdAllowsNull);
         Assert.True(hasDeletedColumn);
         Assert.False(hasIsActiveColumn);
 
@@ -472,7 +462,7 @@ public class DoctorsApiTests : IClassFixture<DoctorsApiFactory>
     }
 
     [Fact]
-    public async Task DomainMigrations_PreserveDoctorWithoutSpeciality()
+    public async Task DomainMigrations_RemoveTestDoctorsWithoutSpeciality()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync();
@@ -492,10 +482,63 @@ public class DoctorsApiTests : IClassFixture<DoctorsApiFactory>
 
         await migrator.MigrateAsync();
 
-        var preserved = await context.Database
-            .SqlQuery<int>($"SELECT COUNT(*) AS Value FROM Doctors WHERE Id = {doctorId} AND SpecialityId IS NULL")
+        // Eran datos de prueba: AlignDomainModel los elimina porque la especialidad pasa a ser obligatoria.
+        var remaining = await context.Database
+            .SqlQuery<int>($"SELECT COUNT(*) AS Value FROM Doctors WHERE Id = {doctorId}")
             .SingleAsync();
-        Assert.Equal(1, preserved);
+        Assert.Equal(0, remaining);
+    }
+
+    [Fact]
+    public async Task DomainMigrations_CreatePatientsFromExistingAppointments()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<Dsw2026TpiDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var context = new Dsw2026TpiDbContext(options);
+        var migrator = context.Database.GetService<IMigrator>();
+        await migrator.MigrateAsync("20260804151434_AlignDoctorSoftDeleteContract");
+
+        var specialityId = Guid.NewGuid();
+        var doctorId = Guid.NewGuid();
+        var ruleId = Guid.NewGuid();
+        var bookedSlotId = Guid.NewGuid();
+        var cancelledSlotId = Guid.NewGuid();
+        var bookedId = Guid.NewGuid();
+        var cancelledId = Guid.NewGuid();
+        var created = new DateTime(2026, 8, 1, 10, 0, 0);
+        var cancelledAt = new DateTime(2026, 8, 2, 10, 0, 0);
+        await context.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO Specialities (Id, Name, Description, Deleted, CreatedAt, UpdatedAt)
+            VALUES ({specialityId}, {"Clínica"}, {"Clínica médica general"}, {false}, {created}, {created});
+            INSERT INTO Doctors (Id, Name, LicenseNumber, Deleted, SpecialityId, CreatedAt, UpdatedAt)
+            VALUES ({doctorId}, {"Médico"}, {"MP-1"}, {false}, {specialityId}, {created}, {created});
+            INSERT INTO AVAILABILITY_RULES (Id, DoctorId, Month, Year, DayOfWeek, StartTime, EndTime, Deleted, CreatedAt, UpdatedAt)
+            VALUES ({ruleId}, {doctorId}, {8}, {2026}, {"Tuesday"}, {"09:00:00"}, {"10:00:00"}, {false}, {created}, NULL);
+            INSERT INTO AVAILABILITY_SLOTS (Id, AvailabilityRuleId, DoctorId, SlotDate, StartTime, EndTime, Status, Deleted, CreatedAt, UpdatedAt)
+            VALUES ({bookedSlotId}, {ruleId}, {doctorId}, {"2026-08-11"}, {"09:00:00"}, {"09:30:00"}, {"BOOKED"}, {false}, {created}, NULL),
+                   ({cancelledSlotId}, {ruleId}, {doctorId}, {"2026-08-11"}, {"09:30:00"}, {"10:00:00"}, {"AVAILABLE"}, {false}, {created}, NULL);
+            INSERT INTO APPOINTMENTS (Id, DoctorId, AvailabilitySlotId, PatientDni, Reason, Status, CreatedAt, UpdatedAt)
+            VALUES ({bookedId}, {doctorId}, {bookedSlotId}, {"12345678"}, {"Control anual"}, {"BOOKED"}, {created}, {created}),
+                   ({cancelledId}, {doctorId}, {cancelledSlotId}, {"12345678"}, {"Control previo"}, {"CANCELLED"}, {created}, {cancelledAt});
+            """);
+
+        await migrator.MigrateAsync();
+
+        var patient = await context.Patients.Include(candidate => candidate.Appointments).SingleAsync();
+        Assert.Equal("12345678", patient.Dni);
+        Assert.Null(patient.UserId);
+        Assert.Equal(
+            new[] { bookedId, cancelledId }.Order(),
+            patient.Appointments.Select(appointment => appointment.Id).Order());
+        var cancelled = patient.Appointments.Single(appointment => appointment.Id == cancelledId);
+        Assert.Equal(cancelledAt, cancelled.CancelledAt);
+        Assert.Null(patient.Appointments.Single(appointment => appointment.Id == bookedId).CancelledAt);
+        var rule = await context.AvailabilityRules.SingleAsync();
+        Assert.Equal(DayOfWeek.Tuesday, rule.DayOfWeek);
+        Assert.Equal(created, rule.UpdatedAt);
     }
 
     private async Task<Speciality> CreateSpeciality(string prefix, bool deleted = false)

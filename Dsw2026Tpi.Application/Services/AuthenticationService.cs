@@ -20,18 +20,21 @@ public class AuthenticationService : IAuthenticationService
     private readonly ISignInService _signInManager;
     private readonly AuthenticationDbContext _authenticationContext;
     private readonly JwtService _jwtService;
+    private readonly IPatientRegistry _patientRegistry;
     private readonly ILogger<AuthenticationService> _logger;
 
     public AuthenticationService(UserManager<ApplicationUser> userManager,
         ISignInService signInManager,
         AuthenticationDbContext authenticationContext,
         JwtService jwtService,
+        IPatientRegistry patientRegistry,
         ILogger<AuthenticationService> logger)
     {
         _userManager = userManager;
         _signInManager = signInManager;
         _authenticationContext = authenticationContext;
         _jwtService = jwtService;
+        _patientRegistry = patientRegistry;
         _logger = logger;
     }
 
@@ -82,6 +85,8 @@ public class AuthenticationService : IAuthenticationService
         {
             var patient = await FindExistingPatientAsync(request.Email, request.Dni);
             patient ??= await CreatePatientAsync(request.Email, request.Dni);
+            // RN06: el primer ingreso también registra al paciente del dominio, asociado a su usuario de Identity.
+            await _patientRegistry.EnsureAsync(request.Dni, patient.Id);
 
             var token = _jwtService.GenerateToken(patient.UserName!, Roles.Patient);
             return new LoginPatientModel.Response(

@@ -21,9 +21,9 @@ namespace Dsw2026Tpi.Data.Configurations
             builder.Property(e => e.Year)
                 .IsRequired();
 
+            // El modelo de datos define day_of_week como tinyint; System.DayOfWeek se guarda como entero.
             builder.Property(e => e.DayOfWeek)
-                .IsRequired()
-                .HasMaxLength(20);
+                .IsRequired();
 
             builder.Property(e => e.StartTime)
                 .IsRequired();
@@ -39,9 +39,8 @@ namespace Dsw2026Tpi.Data.Configurations
             builder.HasIndex(e => new { e.DoctorId, e.Year, e.Month, e.DayOfWeek })
                 .IsUnique();
 
-           
             builder.HasOne(e => e.Doctor)
-                .WithMany() 
+                .WithMany(doctor => doctor.Availabilities)
                 .HasForeignKey(e => e.DoctorId)
                 .OnDelete(DeleteBehavior.Cascade);
         }
