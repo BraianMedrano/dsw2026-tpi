@@ -1,4 +1,4 @@
-﻿using Dsw2026Tpi.Domain.Entities;
+using Dsw2026Tpi.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -9,5 +9,20 @@ public class DoctorConfiguration : IEntityTypeConfiguration<Doctor>
     public void Configure(EntityTypeBuilder<Doctor> builder)
     {
         builder.ToTable("Doctors");
+        builder.Property(doctor => doctor.Name)
+            .HasMaxLength(100)
+            .IsRequired();
+        builder.Property(doctor => doctor.LicenseNumber)
+            .IsRequired();
+        builder.Property(doctor => doctor.Deleted)
+            .IsRequired();
+
+        builder.HasOne(doctor => doctor.Speciality)
+            .WithMany(speciality => speciality.Doctors)
+            .HasForeignKey(doctor => doctor.SpecialityId)
+            .IsRequired()
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasQueryFilter(doctor => !doctor.Deleted);
     }
 }

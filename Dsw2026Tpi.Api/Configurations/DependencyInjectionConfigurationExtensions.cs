@@ -12,8 +12,16 @@ public static class DependencyInjectionConfigurationExtensions
     {
         services.AddScoped<IPersistence, PersistenceEf>();
         services.AddScoped<IDoctorService, DoctorService>();
+        services.AddScoped<ISpecialtyService, SpecialtyService>();
         services.AddScoped<IAuthenticationService, AuthenticationService>();
+        services.AddScoped<ITokenRevocationService, TokenRevocationService>();
         services.AddScoped<ISignInService, SignInService>();
+        services.AddScoped<IAvailabilityService, AvailabilityService>();
+        services.AddScoped<IAppointmentService, AppointmentService>();
+        services.AddScoped<IPatientRegistry, PatientRegistry>();
+        services.AddSingleton<TimeProvider>(TimeProvider.System);
+        services.AddScoped<InitialAdministratorBootstrapper>();
+        services.AddScoped<ApplicationStartupInitializer>();
         services.AddSingleton<JwtService>();
         return services;
     }

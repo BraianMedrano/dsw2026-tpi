@@ -1,16 +1,57 @@
 # Trabajo Práctico Integrador
 ## Desarrollo de Software 2026
 
-Acceso al [documento](https://frtutneduar-my.sharepoint.com/:b:/g/personal/franciscovicente_doc_frt_utn_edu_ar/IQD-5kaAARqnT5eL7EnPMCPgAX2LFXXX6e3p-u1C43z5rsQ?e=lbbpnz)
+## Integrantes
 
-Instrucciones:
-* Realizar una bifurcación por grupo
-* Crear una rama de larga duración `development`
-* Completar `README` con los integrantes en cada bifurcación
-* Todos los integrantes deben participar con confirmaciones en el repositorio bifurcado
-* Organizar el trabajo en equipo y crear ramas temporales
-* Actualizar la rama de larga duración mediante **pull-requests**
-* No eliminar las ramas temporales
-* Tener en cuenta que ya se realizaron las migraciones de Identity, crear nuevas de ser necesario
-* Para más detalles, revisar la grabación de la última clase
-* El endpoint de registración de usuarios administradores está disponible para crear usuarios y poder hacer pruebas, a futuro se eliminará
+- Braian Medrano — Legajo 57121
+- Fernando Chumba — Legajo 53951
+- Tobias Juarez Julio — Legajo 57424
+
+## Orden de implementación del backend
+
+1. `feature/foundation`
+2. `chore/ci`
+3. `feature/auth` y `feature/specialties` en paralelo
+4. `feature/doctors`
+5. `feature/availabilities`
+6. `feature/appointments`
+7. `feature/patient-history`
+8. `chore/observability`
+
+Las ramas se organizan por módulo funcional, no por capa técnica, para reducir dependencias entre integrantes.
+
+## Base de datos compartida
+
+El equipo utiliza **SQLite como único proveedor de EF Core**. Los contextos de dominio e Identity conservan modelos y migraciones separados, pero comparten la base local `Dsw2026Tpi.Api/Dsw2026Tpi.db`. No se deben agregar migraciones de SQL Server ni cambiar el proveedor en ramas individuales.
+
+La restauración, compilación, ejecución de pruebas y administración de la base local se documentan en [DEVELOPMENT.md](DEVELOPMENT.md).
+
+## Autenticación
+
+El administrador inicial se crea mediante una configuración privada durante el arranque; no existe un endpoint público para registrar administradores. Los pacientes ingresan con email y DNI y su cuenta se crea automáticamente en el primer acceso.
+
+La configuración, los flujos, las decisiones de seguridad y la prueba desde Visual Studio y Swagger se explican en [AUTHENTICATION.md](AUTHENTICATION.md).
+
+### Clave JWT para desarrollo
+
+Antes de ejecutar la API localmente, generá una clave nueva y guardala en User Secrets.
+Desde la raíz del repositorio, en PowerShell:
+
+```powershell
+$jwtBytes = New-Object byte[] 64
+[System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($jwtBytes)
+$jwtKey = [Convert]::ToBase64String($jwtBytes)
+dotnet user-secrets set "Jwt:Key" $jwtKey --project Dsw2026Tpi.Api | Out-Null
+Remove-Variable jwtKey, jwtBytes
+```
+
+Cada integrante debe generar su propia clave y mantenerla fuera del repositorio.
+
+## Consigna
+
+Acceso al [documento del TPI](https://frtutneduar-my.sharepoint.com/:b:/g/personal/franciscovicente_doc_frt_utn_edu_ar/IQD-5kaAARqnT5eL7EnPMCPgAX2LFXXX6e3p-u1C43z5rsQ?e=lbbpnz).
+
+- Trabajar sobre una bifurcación por grupo y una rama de larga duración `development`.
+- Organizar el trabajo mediante ramas temporales y actualizar `development` mediante pull requests.
+- Mantener las migraciones de Identity y crear nuevas migraciones cuando corresponda.
+- Provisionar el administrador inicial sin publicar credenciales ni un registro abierto.

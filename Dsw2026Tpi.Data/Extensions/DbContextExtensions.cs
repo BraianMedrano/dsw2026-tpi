@@ -15,4 +15,19 @@ public static class DbContextExtensions
         context.Set<T>().AddRange(entities);
         context.SaveChanges();
     }
+
+    public static async Task SeedworkAsync<T>(
+        this DbContext context,
+        string dataSource,
+        CancellationToken cancellationToken) where T : class
+    {
+        if (await context.Set<T>().AnyAsync(cancellationToken)) return;
+        var json = await File.ReadAllTextAsync(
+            Path.Combine(AppContext.BaseDirectory, dataSource),
+            cancellationToken);
+        var entities = JsonSerializer.Deserialize<List<T>>(json, JsonOptions.JsonSerializerOptions);
+        if (entities == null || entities.Count == 0) return;
+        await context.Set<T>().AddRangeAsync(entities, cancellationToken);
+        await context.SaveChangesAsync(cancellationToken);
+    }
 }

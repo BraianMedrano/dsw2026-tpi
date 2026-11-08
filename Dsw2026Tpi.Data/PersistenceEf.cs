@@ -59,17 +59,20 @@ public class PersistenceEf: IPersistence
     public async Task<Pagination<T>> Paginate<T, TKey>(int pageSize, int pageIndex, Expression<Func<T, bool>> predicate, Expression<Func<T, TKey>> sortOrder, params string[] includes) where T : EntityBase
     {
         pageSize = Math.Abs(pageSize);
+        // La API expresa la primera página como 1, pero Skip calcula desde el índice 0.
         pageIndex = Math.Abs(pageIndex) == 0 ? 0 : Math.Abs(pageIndex) - 1;
 
         var filtered = Include(_context.Set<T>(), includes)
                  .Where(predicate)
                  .OrderBy(sortOrder);
 
+        // El total se calcula antes de paginar para informar cuántos registros cumplen el filtro.
         var total = await filtered.CountAsync();
 
         
         async Task<Pagination<T>> GetPage(int skip, int take)
         {
+            // Skip omite las páginas anteriores y Take limita la consulta a la página solicitada.
             var data = await filtered.Skip(skip)
                     .Take(take)
                     .ToListAsync();

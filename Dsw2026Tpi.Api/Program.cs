@@ -1,7 +1,11 @@
 using Dsw2026Tpi.Api.Configurations;
 using Dsw2026Tpi.Api.Middlewares;
+using Dsw2026Tpi.Api.Services;
+using Dsw2026Tpi.CrossCutting.Models;
+using Dsw2026Tpi.CrossCutting.Resources;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Mvc;
 using Serilog;
 
 namespace Dsw2026Tpi.Api;
@@ -25,14 +29,37 @@ public class Program
             builder.AddSerilogConfiguration();
             builder.Services.AddAppIdentity();
             builder.Services.AddAppAuthentication(builder.Configuration);
+            builder.Services.AddAppRateLimiting(builder.Configuration);
             builder.Services.AddSwaggerConfiguration();
             builder.Services.AddApplicationPersistence(builder.Configuration);
             builder.Services.AddAppCors(builder.Configuration);
             builder.Services.AddAppDependencies();
-            builder.Services.AddControllers();
+            builder.Services.AddControllers()
+                .ConfigureApiBehaviorOptions(options =>
+                {
+                    options.InvalidModelStateResponseFactory = context =>
+                    {
+                        var error = new ErrorResponse(
+                            nameof(ErrorCodes.VALIDATION_ERROR),
+                            ErrorCodes.VALIDATION_ERROR);
+                        error.AddDetail(
+                            context.ModelState
+                                .Where(entry => entry.Value?.Errors.Count > 0)
+                                .SelectMany(entry => entry.Value!.Errors.Select(modelError =>
+                                    (entry.Key, modelError.ErrorMessage))));
+                        return new BadRequestObjectResult(error);
+                    };
+                });
             builder.Services.AddHealthChecks();
 
             var app = builder.Build();
+
+            await using (var scope = app.Services.CreateAsyncScope())
+            {
+                var initializer =
+                    scope.ServiceProvider.GetRequiredService<ApplicationStartupInitializer>();
+                await initializer.InitializeAsync();
+            }
 
             app.UseSerilogRequestLogging();
 
@@ -46,13 +73,16 @@ public class Program
                 app.UseSwaggerUI();
             }
 
-            app.UseAuthentication();
-            app.UseAuthorization();
-            app.UseCors();
             app.UseMiddleware<ExceptionHandlingMiddleware>();
+            app.UseCors();
+            app.UseAuthentication();
+            // El rate limiter se ejecuta después de autenticar para particionar por identidad cuando existe.
+            app.UseRateLimiter();
+            app.UseAuthorization();
 
             app.MapControllers();
-            app.MapHealthChecks("/health-check");
+            // La consigna deja públicos únicamente los dos login; el estado interno también requiere token.
+            app.MapHealthChecks("/health-check").RequireAuthorization();
 
             Log.Information("Aplicación iniciada correctamente");
 

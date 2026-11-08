@@ -9,5 +9,8 @@ public class SpecialityConfiguration : IEntityTypeConfiguration<Speciality>
     public void Configure(EntityTypeBuilder<Speciality> builder)
     {
         builder.ToTable("Specialities");
+        builder.Property(speciality => speciality.Deleted)
+            .IsRequired();
+        builder.HasQueryFilter(speciality => !speciality.Deleted);
     }
 }

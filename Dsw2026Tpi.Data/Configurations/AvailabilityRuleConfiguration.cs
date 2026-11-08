@@ -1,0 +1,48 @@
+using Dsw2026Tpi.Domain.Entities;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+
+namespace Dsw2026Tpi.Data.Configurations
+{
+    public class AvailabilityRuleConfiguration : IEntityTypeConfiguration<AvailabilityRule>
+    {
+        public void Configure(EntityTypeBuilder<AvailabilityRule> builder)
+        {
+            builder.ToTable("AVAILABILITY_RULES");
+
+            builder.HasKey(e => e.Id);
+
+            builder.Property(e => e.DoctorId)
+                .IsRequired();
+
+            builder.Property(e => e.Month)
+                .IsRequired();
+
+            builder.Property(e => e.Year)
+                .IsRequired();
+
+            // El modelo de datos define day_of_week como tinyint; System.DayOfWeek se guarda como entero.
+            builder.Property(e => e.DayOfWeek)
+                .IsRequired();
+
+            builder.Property(e => e.StartTime)
+                .IsRequired();
+
+            builder.Property(e => e.EndTime)
+                .IsRequired();
+
+            builder.Property(e => e.Deleted)
+                .HasDefaultValue(false);
+
+            // El TPI modela un único rango por médico, mes y día de semana; no se guardan turnos partidos.
+            // El servicio valida el caso amigablemente y este índice único protege la regla ante solicitudes concurrentes.
+            builder.HasIndex(e => new { e.DoctorId, e.Year, e.Month, e.DayOfWeek })
+                .IsUnique();
+
+            builder.HasOne(e => e.Doctor)
+                .WithMany(doctor => doctor.Availabilities)
+                .HasForeignKey(e => e.DoctorId)
+                .OnDelete(DeleteBehavior.Cascade);
+        }
+    }
+}

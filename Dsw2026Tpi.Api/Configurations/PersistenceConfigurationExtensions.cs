@@ -11,22 +11,28 @@ public static class PersistenceConfigurationExtensions
     public static IServiceCollection AddApplicationPersistence(this IServiceCollection services,
         IConfiguration configuration)
     {
-        //Obtener cadena de conexión desde appsettings.json
+        // Lee desde appsettings la cadena de conexión SQLite compartida.
         var connectionString = configuration.GetConnectionString("DefaultConnection");
+        // Path.Combine usa el separador correcto tanto en Windows como en Linux.
+        var rolesDataSource = Path.Combine("Sources", "roles.json");
 
-        //Agregar contexto (O/RM) y utilizar SQL Server para DB
+        // Mantiene aislados los modelos de dominio e Identity aunque usen una misma base local portable.
         services.AddDbContext<Dsw2026TpiDbContext>(options =>
         {
-            options.UseSqlServer(connectionString);
+            options.UseSqlite(connectionString);
         });
 
         services.AddDbContext<AuthenticationDbContext>(options =>
         {
-            options.UseSqlServer(connectionString);
-            options.UseSeeding((c, t) =>
+            options.UseSqlite(connectionString);
+            options.UseSeeding((context, _) =>
             {
-                c.Seedwork<IdentityRole>("Sources\\roles.json");
+                context.Seedwork<IdentityRole>(rolesDataSource);
             });
+            options.UseAsyncSeeding((context, _, cancellationToken) =>
+                context.SeedworkAsync<IdentityRole>(
+                    rolesDataSource,
+                    cancellationToken));
         });
         return services;
     }
