@@ -170,9 +170,12 @@ public sealed class RateLimitingTests
         Dictionary<string, string?> overrides)
         : WebApplicationFactory<Program>
     {
+        private const string TestJwtKey = "rate-limiting-integration-test-signing-key-not-for-production";
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Development");
+            builder.UseSetting("Jwt:Key", TestJwtKey);
             var connectionString =
                 $"Data Source={databasePath};Foreign Keys=True;Pooling=False";
             builder.ConfigureAppConfiguration((_, configuration) =>
@@ -180,6 +183,7 @@ public sealed class RateLimitingTests
                 var values = new Dictionary<string, string?>(overrides)
                 {
                     ["ConnectionStrings:DefaultConnection"] = connectionString,
+                    ["Jwt:Key"] = TestJwtKey,
                     ["InitialAdministrator:Email"] = AdministratorEmail,
                     ["InitialAdministrator:Password"] = AdministratorPassword
                 };

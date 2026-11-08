@@ -24,6 +24,13 @@ public class DoctorController : AppController
         return Ok(doctors);
     }
 
+    [HttpGet("{id:guid}")]
+    public async Task<IActionResult> GetById(Guid id)
+    {
+        var doctor = await _service.GetByIdAsync(id);
+        return Ok(doctor);
+    }
+
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] DoctorModel.Request request)
     {

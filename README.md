@@ -32,6 +32,21 @@ El administrador inicial se crea mediante una configuración privada durante el 
 
 La configuración, los flujos, las decisiones de seguridad y la prueba desde Visual Studio y Swagger se explican en [AUTHENTICATION.md](AUTHENTICATION.md).
 
+### Clave JWT para desarrollo
+
+Antes de ejecutar la API localmente, generá una clave nueva y guardala en User Secrets.
+Desde la raíz del repositorio, en PowerShell:
+
+```powershell
+$jwtBytes = New-Object byte[] 64
+[System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($jwtBytes)
+$jwtKey = [Convert]::ToBase64String($jwtBytes)
+dotnet user-secrets set "Jwt:Key" $jwtKey --project Dsw2026Tpi.Api | Out-Null
+Remove-Variable jwtKey, jwtBytes
+```
+
+Cada integrante debe generar su propia clave y mantenerla fuera del repositorio.
+
 ## Consigna
 
 Acceso al [documento del TPI](https://frtutneduar-my.sharepoint.com/:b:/g/personal/franciscovicente_doc_frt_utn_edu_ar/IQD-5kaAARqnT5eL7EnPMCPgAX2LFXXX6e3p-u1C43z5rsQ?e=lbbpnz).

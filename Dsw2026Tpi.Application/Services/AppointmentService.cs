@@ -190,6 +190,9 @@ public sealed class AppointmentService(
             {
                 appointment.Id,
                 appointment.Status,
+                appointment.AvailabilitySlot.SlotDate,
+                appointment.AvailabilitySlot.StartTime,
+                appointment.AvailabilitySlot.EndTime,
                 PatientDni = appointment.Patient.Dni,
                 PatientFullName = appointment.Patient.FullName,
                 appointment.AvailabilitySlot.DoctorId,
@@ -210,7 +213,10 @@ public sealed class AppointmentService(
             new AppointmentModel.AdminDoctorResponse(
                 appointment.DoctorId,
                 appointment.DoctorName,
-                new AppointmentModel.AdminSpecialtyResponse(appointment.SpecialtyId, appointment.SpecialtyName))))
+                new AppointmentModel.AdminSpecialtyResponse(appointment.SpecialtyId, appointment.SpecialtyName)),
+            appointment.SlotDate,
+            appointment.StartTime,
+            appointment.EndTime))
             .ToList();
         return new AppointmentModel.AdminPagedResponse(pageIndex, pageSize, total, data);
     }

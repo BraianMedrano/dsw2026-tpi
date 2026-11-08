@@ -49,6 +49,78 @@ public class DoctorsApiTests : IClassFixture<DoctorsApiFactory>
     }
 
     [Fact]
+    public async Task GetById_ReturnsTheSameDoctorAsTheList()
+    {
+        var speciality = await CreateSpeciality("Detalle");
+        using var client = _factory.CreateAdministratorClient();
+        var marker = Guid.NewGuid().ToString("N")[..8];
+        var created = await CreateDoctor(client, $"Doctor {marker}", speciality.Id);
+
+        var response = await client.GetAsync($"/api/doctors/{created.Id}");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var doctor = await response.Content.ReadFromJsonAsync<DoctorModel.Response>();
+        Assert.Equal(created, doctor);
+        var page = await GetPage(client, $"?name={marker}");
+        Assert.Equal(Assert.Single(page.Data), doctor);
+    }
+
+    [Fact]
+    public async Task GetById_ReturnsNotFoundForMissingOrDeletedDoctor()
+    {
+        var speciality = await CreateSpeciality("Detalle de baja");
+        using var client = _factory.CreateAdministratorClient();
+        var created = await CreateDoctor(client, "Doctor de baja", speciality.Id);
+
+        await AssertNotFound(await client.GetAsync($"/api/doctors/{Guid.NewGuid()}"), "Médico");
+        Assert.Equal(HttpStatusCode.OK, (await client.DeleteAsync($"/api/doctors/{created.Id}")).StatusCode);
+        await AssertNotFound(await client.GetAsync($"/api/doctors/{created.Id}"), "Médico");
+    }
+
+    [Theory]
+    [InlineData(null, HttpStatusCode.Unauthorized)]
+    [InlineData(Roles.Patient, HttpStatusCode.Forbidden)]
+    public async Task GetById_EnforcesAdministratorPolicy(string? role, HttpStatusCode expected)
+    {
+        using var client = _factory.CreateClientForRole(role);
+
+        var response = await client.GetAsync($"/api/doctors/{Guid.NewGuid()}");
+
+        Assert.Equal(expected, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateAndUpdate_RequireSpecialtyIdInsteadOfLegacySpecialityId()
+    {
+        var speciality = await CreateSpeciality("Contrato JSON");
+        var replacementSpeciality = await CreateSpeciality("Contrato JSON actualizado");
+        using var client = _factory.CreateAdministratorClient();
+
+        var create = await client.PostAsJsonAsync(
+            "/api/doctors",
+            new { name = "Médico de prueba", licenseNumber = "MP-CONTRATO", specialtyId = speciality.Id });
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        var created = (await create.Content.ReadFromJsonAsync<DoctorModel.Response>())!;
+
+        var legacyCreate = await client.PostAsJsonAsync(
+            "/api/doctors",
+            new { name = "Médico anterior", licenseNumber = "MP-ANTERIOR", specialityId = speciality.Id });
+        await AssertValidationError(legacyCreate);
+
+        var update = await client.PutAsJsonAsync(
+            $"/api/doctors/{created.Id}",
+            new { name = "Médico actualizado", licenseNumber = "MP-ACTUAL", specialtyId = replacementSpeciality.Id });
+        Assert.Equal(HttpStatusCode.OK, update.StatusCode);
+        var updated = (await update.Content.ReadFromJsonAsync<DoctorModel.Response>())!;
+        Assert.Equal(replacementSpeciality.Id, updated.Specialty!.Id);
+
+        var legacyUpdate = await client.PutAsJsonAsync(
+            $"/api/doctors/{created.Id}",
+            new { name = "Médico anterior", licenseNumber = "MP-ANTERIOR", specialityId = speciality.Id });
+        await AssertValidationError(legacyUpdate);
+    }
+
+    [Fact]
     public async Task Create_ReturnsCreatedAndPersistsNormalizedDoctor()
     {
         var speciality = await CreateSpeciality("Cardiología");

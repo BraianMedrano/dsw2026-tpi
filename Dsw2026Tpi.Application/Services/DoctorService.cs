@@ -48,9 +48,21 @@ public class DoctorService : IDoctorService
         return new DoctorModel.PagedResponse(pageSize, pageIndex, data, total);
     }
 
+    public async Task<DoctorModel.Response> GetByIdAsync(Guid id)
+    {
+        var doctor = await _context.Set<Doctor>()
+            .AsNoTracking()
+            .Include(doctor => doctor.Speciality)
+            .Where(doctor => doctor.Id == id && !doctor.Speciality.Deleted)
+            .FirstOrDefaultAsync()
+            ?? throw new EntityNotFoundException("Médico");
+
+        return Map(doctor);
+    }
+
     public async Task<DoctorModel.Response> CreateAsync(DoctorModel.Request request)
     {
-        var specialityId = ValidateSpecialityId(request.SpecialityId);
+        var specialityId = ValidateSpecialityId(request.SpecialtyId);
         var speciality = await FindActiveSpecialityAsync(specialityId);
         var doctor = new Doctor(request.Name!, request.LicenseNumber!, speciality);
 
@@ -65,7 +77,7 @@ public class DoctorService : IDoctorService
         var doctor = await _context.Set<Doctor>()
             .FirstOrDefaultAsync(candidate => candidate.Id == id)
             ?? throw new EntityNotFoundException("Médico");
-        var specialityId = ValidateSpecialityId(request.SpecialityId);
+        var specialityId = ValidateSpecialityId(request.SpecialtyId);
         var speciality = await FindActiveSpecialityAsync(specialityId);
 
         doctor.Update(request.Name!, request.LicenseNumber!, speciality);
@@ -95,7 +107,7 @@ public class DoctorService : IDoctorService
         {
             throw new ValidationException()
                 .WithDetail(
-                    nameof(DoctorModel.Request.SpecialityId),
+                    nameof(DoctorModel.Request.SpecialtyId),
                     "La especialidad es obligatoria.");
         }
 

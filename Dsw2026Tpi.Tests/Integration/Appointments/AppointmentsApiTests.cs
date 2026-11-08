@@ -42,6 +42,30 @@ public sealed class AppointmentsApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task DevelopmentCors_AllowsFrontendPreflightAndRejectsOtherOrigins()
+    {
+        using var client = _factory.CreateClient();
+        using var allowed = new HttpRequestMessage(HttpMethod.Options, "/api/doctors");
+        allowed.Headers.Add("Origin", "http://localhost:5173");
+        allowed.Headers.Add("Access-Control-Request-Method", "POST");
+        allowed.Headers.Add("Access-Control-Request-Headers", "content-type");
+
+        var allowedResponse = await client.SendAsync(allowed);
+
+        Assert.Equal(HttpStatusCode.NoContent, allowedResponse.StatusCode);
+        Assert.Equal(
+            "http://localhost:5173",
+            Assert.Single(allowedResponse.Headers.GetValues("Access-Control-Allow-Origin")));
+
+        using var disallowed = new HttpRequestMessage(HttpMethod.Options, "/api/doctors");
+        disallowed.Headers.Add("Origin", "http://localhost:5174");
+        disallowed.Headers.Add("Access-Control-Request-Method", "POST");
+        var disallowedResponse = await client.SendAsync(disallowed);
+
+        Assert.False(disallowedResponse.Headers.Contains("Access-Control-Allow-Origin"));
+    }
+
+    [Fact]
     public async Task PatientCanCancelAndConcurrentRebookingPreservesHistoryAsync()
     {
         var data = await CreateSlotAsync();
@@ -176,8 +200,13 @@ public sealed class AppointmentsApiTests : IAsyncLifetime
         Assert.Equal(1, root.GetProperty("total").GetInt32());
 
         var appointment = Assert.Single(root.GetProperty("data").EnumerateArray());
-        Assert.Equal(["appointmentsId", "appointmentsStatus", "patient", "doctor"], appointment.EnumerateObject().Select(property => property.Name));
+        Assert.Equal(
+            ["appointmentsId", "appointmentsStatus", "patient", "doctor", "date", "startTime", "endTime"],
+            appointment.EnumerateObject().Select(property => property.Name));
         Assert.Equal("BOOKED", appointment.GetProperty("appointmentsStatus").GetString());
+        Assert.Equal(data.Slot.SlotDate, DateOnly.Parse(appointment.GetProperty("date").GetString()!));
+        Assert.Equal(data.Slot.StartTime, TimeOnly.Parse(appointment.GetProperty("startTime").GetString()!));
+        Assert.Equal(data.Slot.EndTime, TimeOnly.Parse(appointment.GetProperty("endTime").GetString()!));
         var patientData = appointment.GetProperty("patient");
         Assert.Equal(["dni", "fullName"], patientData.EnumerateObject().Select(property => property.Name));
         Assert.Equal(23456789, patientData.GetProperty("dni").GetInt64());
@@ -748,9 +777,12 @@ public sealed class AppointmentsApiTests : IAsyncLifetime
 
     private sealed class AppointmentsApiFactory(string databasePath) : WebApplicationFactory<Program>
     {
+        private const string TestJwtKey = "appointments-integration-test-signing-key-not-for-production";
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Development");
+            builder.UseSetting("Jwt:Key", TestJwtKey);
             var connectionString =
                 $"Data Source={databasePath};Foreign Keys=True;Pooling=False;Default Timeout=30";
             builder.ConfigureAppConfiguration((_, configuration) =>
@@ -758,6 +790,7 @@ public sealed class AppointmentsApiTests : IAsyncLifetime
                 configuration.AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["ConnectionStrings:DefaultConnection"] = connectionString,
+                    ["Jwt:Key"] = TestJwtKey,
                     ["InitialAdministrator:Email"] = AdministratorEmail,
                     ["InitialAdministrator:Password"] = AdministratorPassword
                 });

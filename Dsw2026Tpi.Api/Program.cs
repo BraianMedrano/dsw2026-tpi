@@ -74,11 +74,11 @@ public class Program
             }
 
             app.UseMiddleware<ExceptionHandlingMiddleware>();
+            app.UseCors();
             app.UseAuthentication();
             // El rate limiter se ejecuta después de autenticar para particionar por identidad cuando existe.
             app.UseRateLimiter();
             app.UseAuthorization();
-            app.UseCors();
 
             app.MapControllers();
             // La consigna deja públicos únicamente los dos login; el estado interno también requiere token.

@@ -153,15 +153,19 @@ public sealed class AuthenticationHttpTests : IAsyncLifetime
     private sealed class AuthenticationApiFactory(string databasePath)
         : WebApplicationFactory<Program>
     {
+        private const string TestJwtKey = "authentication-integration-test-signing-key-not-for-production";
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Development");
+            builder.UseSetting("Jwt:Key", TestJwtKey);
             builder.ConfigureAppConfiguration((_, configuration) =>
             {
                 configuration.AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["ConnectionStrings:DefaultConnection"] =
                         $"Data Source={databasePath};Foreign Keys=True;Pooling=False",
+                    ["Jwt:Key"] = TestJwtKey,
                     ["InitialAdministrator:Email"] = AdministratorEmail,
                     ["InitialAdministrator:Password"] = AdministratorPassword
                 });

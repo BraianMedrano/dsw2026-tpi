@@ -72,7 +72,10 @@ public static class AppointmentModel
         Guid AppointmentsId,
         string AppointmentsStatus,
         AdminPatientResponse Patient,
-        AdminDoctorResponse Doctor);
+        AdminDoctorResponse Doctor,
+        DateOnly Date,
+        TimeOnly StartTime,
+        TimeOnly EndTime);
 
     public sealed record AdminPatientResponse(long Dni, string FullName);
 
