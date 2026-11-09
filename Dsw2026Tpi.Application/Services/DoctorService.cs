@@ -48,9 +48,24 @@ public class DoctorService : IDoctorService
         return new DoctorModel.PagedResponse(pageSize, pageIndex, data, total);
     }
 
+    // F03: detalle de un médico para el formulario de edición del frontend
+    // (/admin/doctors/:id/edit). Usa el mismo filtro y la misma forma que el listado,
+    // así la pantalla recibe exactamente los datos que ya conoce.
+    public async Task<DoctorModel.Response> GetByIdAsync(Guid id) =>
+        await _context.Set<Doctor>()
+            .AsNoTracking()
+            .Where(doctor => doctor.Id == id && !doctor.Speciality.Deleted)
+            .Select(doctor => new DoctorModel.Response(
+                doctor.Id,
+                doctor.Name,
+                doctor.LicenseNumber,
+                new DoctorModel.SpecialityDto(doctor.SpecialityId, doctor.Speciality.Name)))
+            .FirstOrDefaultAsync()
+        ?? throw new EntityNotFoundException("Médico");
+
     public async Task<DoctorModel.Response> CreateAsync(DoctorModel.Request request)
     {
-        var specialityId = ValidateSpecialityId(request.SpecialityId);
+        var specialityId = ValidateSpecialtyId(request.SpecialtyId);
         var speciality = await FindActiveSpecialityAsync(specialityId);
         var doctor = new Doctor(request.Name!, request.LicenseNumber!, speciality);
 
@@ -65,7 +80,7 @@ public class DoctorService : IDoctorService
         var doctor = await _context.Set<Doctor>()
             .FirstOrDefaultAsync(candidate => candidate.Id == id)
             ?? throw new EntityNotFoundException("Médico");
-        var specialityId = ValidateSpecialityId(request.SpecialityId);
+        var specialityId = ValidateSpecialtyId(request.SpecialtyId);
         var speciality = await FindActiveSpecialityAsync(specialityId);
 
         doctor.Update(request.Name!, request.LicenseNumber!, speciality);
@@ -89,17 +104,17 @@ public class DoctorService : IDoctorService
             .FirstOrDefaultAsync(speciality => speciality.Id == specialityId)
         ?? throw new EntityNotFoundException("Especialidad");
 
-    private static Guid ValidateSpecialityId(Guid? specialityId)
+    private static Guid ValidateSpecialtyId(Guid? specialtyId)
     {
-        if (specialityId is null || specialityId == Guid.Empty)
+        if (specialtyId is null || specialtyId == Guid.Empty)
         {
             throw new ValidationException()
                 .WithDetail(
-                    nameof(DoctorModel.Request.SpecialityId),
+                    nameof(DoctorModel.Request.SpecialtyId),
                     "La especialidad es obligatoria.");
         }
 
-        return specialityId.Value;
+        return specialtyId.Value;
     }
 
     private static DoctorModel.Response Map(Doctor doctor) =>

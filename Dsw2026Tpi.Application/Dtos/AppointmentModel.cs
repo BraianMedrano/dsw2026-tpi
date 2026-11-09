@@ -68,11 +68,17 @@ public static class AppointmentModel
         int Total,
         IReadOnlyCollection<AdminResponse> Data);
 
+    // F03: Date, StartTime y EndTime se agregan al final para que la búsqueda
+    // avanzada del frontend (/admin/appointments) muestre cuándo es cada turno.
+    // Los campos anteriores no cambian, así que ningún cliente existente se rompe.
     public sealed record AdminResponse(
         Guid AppointmentsId,
         string AppointmentsStatus,
         AdminPatientResponse Patient,
-        AdminDoctorResponse Doctor);
+        AdminDoctorResponse Doctor,
+        DateOnly Date,
+        TimeOnly StartTime,
+        TimeOnly EndTime);
 
     public sealed record AdminPatientResponse(long Dni, string FullName);
 

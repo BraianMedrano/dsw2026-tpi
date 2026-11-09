@@ -192,6 +192,89 @@ public class DoctorsApiTests : IClassFixture<DoctorsApiFactory>
         await AssertNotFound(response, "Especialidad");
     }
 
+    // F03: el enunciado y el frontend usan "specialtyId". Se prueba con JSON crudo
+    // para fijar el nombre real del campo, no el de la propiedad C#.
+    [Fact]
+    public async Task Create_AcceptsSpecialtyIdField()
+    {
+        var speciality = await CreateSpeciality("Especialidad con specialtyId");
+        using var client = _factory.CreateAdministratorClient();
+
+        var response = await client.PostAsync(
+            "/api/doctors",
+            JsonBody($$"""{"name":"Nombre válido","licenseNumber":"MP-106","specialtyId":"{{speciality.Id}}"}"""));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var created = await response.Content.ReadFromJsonAsync<DoctorModel.Response>();
+        Assert.Equal(speciality.Id, created!.Specialty!.Id);
+    }
+
+    // F03: el nombre anterior "specialityId" ya no se acepta.
+    [Fact]
+    public async Task Create_RejectsLegacySpecialityIdField()
+    {
+        var speciality = await CreateSpeciality("Especialidad con nombre anterior");
+        using var client = _factory.CreateAdministratorClient();
+
+        var response = await client.PostAsync(
+            "/api/doctors",
+            JsonBody($$"""{"name":"Nombre válido","licenseNumber":"MP-107","specialityId":"{{speciality.Id}}"}"""));
+
+        await AssertValidationError(response);
+    }
+
+    [Fact]
+    public async Task Update_AcceptsSpecialtyIdField()
+    {
+        var speciality = await CreateSpeciality("Especialidad para PUT");
+        using var client = _factory.CreateAdministratorClient();
+        var doctor = await CreateDoctor(client, "Médico para PUT", speciality.Id);
+
+        var response = await client.PutAsync(
+            $"/api/doctors/{doctor.Id}",
+            JsonBody($$"""{"name":"Médico editado","licenseNumber":"MP-108","specialtyId":"{{speciality.Id}}"}"""));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    // F03: GET /api/doctors/{id} devuelve lo mismo que un elemento del listado.
+    [Fact]
+    public async Task GetById_ReturnsTheSameShapeAsTheListItem()
+    {
+        var speciality = await CreateSpeciality("Especialidad para detalle");
+        using var client = _factory.CreateAdministratorClient();
+        var doctor = await CreateDoctor(client, "Médico para detalle", speciality.Id);
+
+        var response = await client.GetAsync($"/api/doctors/{doctor.Id}");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var detail = await response.Content.ReadFromJsonAsync<DoctorModel.Response>();
+        var page = await GetPage(client, "?name=Médico para detalle");
+        Assert.Equal(Assert.Single(page.Data), detail);
+    }
+
+    [Fact]
+    public async Task GetById_ReturnsNotFoundForMissingDoctor()
+    {
+        using var client = _factory.CreateAdministratorClient();
+
+        var response = await client.GetAsync($"/api/doctors/{Guid.NewGuid()}");
+
+        await AssertNotFound(response, "Médico");
+    }
+
+    [Theory]
+    [InlineData(null, HttpStatusCode.Unauthorized)]
+    [InlineData(Roles.Patient, HttpStatusCode.Forbidden)]
+    public async Task GetById_EnforcesAdministratorPolicy(string? role, HttpStatusCode expected)
+    {
+        using var client = _factory.CreateClientForRole(role);
+
+        var response = await client.GetAsync($"/api/doctors/{Guid.NewGuid()}");
+
+        Assert.Equal(expected, response.StatusCode);
+    }
+
     [Theory]
     [InlineData("?pageIndex=-1")]
     [InlineData("?pageIndex=1000001")]
@@ -576,6 +659,9 @@ public class DoctorsApiTests : IClassFixture<DoctorsApiFactory>
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<DoctorModel.PagedResponse>())!;
     }
+
+    private static StringContent JsonBody(string json) =>
+        new(json, System.Text.Encoding.UTF8, "application/json");
 
     private static async Task AssertValidationError(HttpResponseMessage response)
     {

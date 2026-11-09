@@ -176,8 +176,14 @@ public sealed class AppointmentsApiTests : IAsyncLifetime
         Assert.Equal(1, root.GetProperty("total").GetInt32());
 
         var appointment = Assert.Single(root.GetProperty("data").EnumerateArray());
-        Assert.Equal(["appointmentsId", "appointmentsStatus", "patient", "doctor"], appointment.EnumerateObject().Select(property => property.Name));
+        // F03: se agregan fecha y horarios al final, sin quitar los campos anteriores.
+        Assert.Equal(
+            ["appointmentsId", "appointmentsStatus", "patient", "doctor", "date", "startTime", "endTime"],
+            appointment.EnumerateObject().Select(property => property.Name));
         Assert.Equal("BOOKED", appointment.GetProperty("appointmentsStatus").GetString());
+        Assert.Equal(data.Slot.SlotDate.ToString("yyyy-MM-dd"), appointment.GetProperty("date").GetString());
+        Assert.Equal(data.Slot.StartTime.ToString("HH:mm:ss"), appointment.GetProperty("startTime").GetString());
+        Assert.Equal(data.Slot.EndTime.ToString("HH:mm:ss"), appointment.GetProperty("endTime").GetString());
         var patientData = appointment.GetProperty("patient");
         Assert.Equal(["dni", "fullName"], patientData.EnumerateObject().Select(property => property.Name));
         Assert.Equal(23456789, patientData.GetProperty("dni").GetInt64());
@@ -751,6 +757,9 @@ public sealed class AppointmentsApiTests : IAsyncLifetime
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Development");
+            // F03: la clave ya no está en appsettings.Development.json (vive en User Secrets).
+            // UseSetting se aplica antes de que Program lea la configuración de JWT.
+            builder.UseSetting("Jwt:Key", "01234567890123456789012345678901");
             var connectionString =
                 $"Data Source={databasePath};Foreign Keys=True;Pooling=False;Default Timeout=30";
             builder.ConfigureAppConfiguration((_, configuration) =>
