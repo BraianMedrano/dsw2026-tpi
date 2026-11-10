@@ -74,11 +74,14 @@ public class Program
             }
 
             app.UseMiddleware<ExceptionHandlingMiddleware>();
+            // F03: CORS va antes de autenticación y autorización. Si corriera después,
+            // el preflight (OPTIONS) del navegador y los 401/403/429 saldrían sin los
+            // encabezados CORS, y el frontend no podría leer la respuesta.
+            app.UseCors();
             app.UseAuthentication();
             // El rate limiter se ejecuta después de autenticar para particionar por identidad cuando existe.
             app.UseRateLimiter();
             app.UseAuthorization();
-            app.UseCors();
 
             app.MapControllers();
             // La consigna deja públicos únicamente los dos login; el estado interno también requiere token.

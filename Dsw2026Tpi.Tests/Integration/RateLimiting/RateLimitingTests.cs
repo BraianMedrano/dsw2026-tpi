@@ -173,6 +173,10 @@ public sealed class RateLimitingTests
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Development");
+            // F03: la clave ya no está en appsettings.Development.json (vive en User Secrets).
+            // UseSetting se aplica antes de que Program lea la configuración de JWT, así
+            // emisión y validación usan la misma clave sin depender de los secretos locales.
+            builder.UseSetting("Jwt:Key", "01234567890123456789012345678901");
             var connectionString =
                 $"Data Source={databasePath};Foreign Keys=True;Pooling=False";
             builder.ConfigureAppConfiguration((_, configuration) =>

@@ -24,6 +24,17 @@ public class DoctorController : AppController
         return Ok(doctors);
     }
 
+    // F03: GET /api/doctors/{id}. Lo usa el frontend para cargar el formulario
+    // de edición. Sigue el mismo patrón que SpecialtiesController.GetById:
+    // 404 (ENTITY_NOTFOUND) si no existe y 403 para pacientes, por la política
+    // de administrador de la clase.
+    [HttpGet("{id:guid}")]
+    public async Task<IActionResult> GetById(Guid id)
+    {
+        var doctor = await _service.GetByIdAsync(id);
+        return Ok(doctor);
+    }
+
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] DoctorModel.Request request)
     {

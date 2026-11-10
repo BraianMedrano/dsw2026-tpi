@@ -156,6 +156,9 @@ public sealed class AuthenticationHttpTests : IAsyncLifetime
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Development");
+            // F03: la clave ya no está en appsettings.Development.json (vive en User Secrets).
+            // UseSetting se aplica antes de que Program lea la configuración de JWT.
+            builder.UseSetting("Jwt:Key", "01234567890123456789012345678901");
             builder.ConfigureAppConfiguration((_, configuration) =>
             {
                 configuration.AddInMemoryCollection(new Dictionary<string, string?>

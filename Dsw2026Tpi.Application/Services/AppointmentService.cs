@@ -195,7 +195,11 @@ public sealed class AppointmentService(
                 appointment.AvailabilitySlot.DoctorId,
                 DoctorName = appointment.AvailabilitySlot.AvailabilityRule.Doctor.Name,
                 SpecialtyId = appointment.AvailabilitySlot.AvailabilityRule.Doctor.SpecialityId,
-                SpecialtyName = appointment.AvailabilitySlot.AvailabilityRule.Doctor.Speciality.Name
+                SpecialtyName = appointment.AvailabilitySlot.AvailabilityRule.Doctor.Speciality.Name,
+                // F03: fecha y horario del bloque reservado, para la búsqueda del frontend.
+                appointment.AvailabilitySlot.SlotDate,
+                appointment.AvailabilitySlot.StartTime,
+                appointment.AvailabilitySlot.EndTime
             })
             .ToListAsync();
 
@@ -210,7 +214,10 @@ public sealed class AppointmentService(
             new AppointmentModel.AdminDoctorResponse(
                 appointment.DoctorId,
                 appointment.DoctorName,
-                new AppointmentModel.AdminSpecialtyResponse(appointment.SpecialtyId, appointment.SpecialtyName))))
+                new AppointmentModel.AdminSpecialtyResponse(appointment.SpecialtyId, appointment.SpecialtyName)),
+            appointment.SlotDate,
+            appointment.StartTime,
+            appointment.EndTime))
             .ToList();
         return new AppointmentModel.AdminPagedResponse(pageIndex, pageSize, total, data);
     }

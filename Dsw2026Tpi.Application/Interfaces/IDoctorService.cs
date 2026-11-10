@@ -5,6 +5,7 @@ namespace Dsw2026Tpi.Application.Interfaces;
 public interface IDoctorService
 {
     Task<DoctorModel.PagedResponse> GetAllAsync(int pageSize, int pageIndex, string? name = null);
+    Task<DoctorModel.Response> GetByIdAsync(Guid id);
     Task<DoctorModel.Response> CreateAsync(DoctorModel.Request request);
     Task<DoctorModel.Response> UpdateAsync(Guid id, DoctorModel.Request request);
     Task DeleteAsync(Guid id);

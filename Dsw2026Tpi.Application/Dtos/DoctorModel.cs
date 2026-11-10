@@ -66,14 +66,18 @@ public record DoctorModel
             get;
             init => field = value?.Trim();
         }
-        public Guid? SpecialityId { get; init; }
+        // F03: el campo se llama "specialtyId", como en el enunciado y en el frontend.
+        // Antes era "specialityId": ese nombre ya no se lee, así que un cliente viejo
+        // recibe 400 ("La especialidad es obligatoria") en lugar de un dato ignorado.
+        // La entidad Doctor conserva SpecialityId porque es el nombre de la columna.
+        public Guid? SpecialtyId { get; init; }
 
         public Request() { }
-        public Request(string? name, string? licenseNumber, Guid? specialityId)
+        public Request(string? name, string? licenseNumber, Guid? specialtyId)
         {
             Name = name?.Trim();
             LicenseNumber = licenseNumber?.Trim();
-            SpecialityId = specialityId;
+            SpecialtyId = specialtyId;
         }
 
         public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
@@ -98,11 +102,11 @@ public record DoctorModel
                     [nameof(LicenseNumber)]);
             }
 
-            if (SpecialityId is null || SpecialityId == Guid.Empty)
+            if (SpecialtyId is null || SpecialtyId == Guid.Empty)
             {
                 yield return new ValidationResult(
                     "La especialidad es obligatoria.",
-                    [nameof(SpecialityId)]);
+                    [nameof(SpecialtyId)]);
             }
         }
     }
