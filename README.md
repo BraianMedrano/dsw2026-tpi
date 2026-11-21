@@ -28,21 +28,39 @@ La restauración, compilación, ejecución de pruebas y administración de la ba
 
 ## Autenticación
 
-El administrador inicial se crea mediante una configuración privada durante el arranque; no existe un endpoint público para registrar administradores. Los pacientes ingresan con email y DNI y su cuenta se crea automáticamente en el primer acceso.
+El administrador inicial se crea durante el arranque a partir de la configuración; no existe un endpoint público para registrar administradores. Los pacientes ingresan con email y DNI y su cuenta se crea automáticamente en el primer acceso.
 
 La configuración, los flujos, las decisiones de seguridad y la prueba desde Visual Studio y Swagger se explican en [AUTHENTICATION.md](AUTHENTICATION.md).
 
-### Clave JWT en desarrollo
+### Ejecución inmediata en desarrollo
 
-La clave que firma los JWT no se guarda en el repositorio. Cada integrante la configura una vez con User Secrets, desde la raíz del repositorio:
+`appsettings.Development.json` incluye una clave JWT y un administrador de prueba, válidos solo en el ambiente `Development`. Desde un clon nuevo, la API arranca sin configuración adicional:
 
-```bash
-dotnet user-secrets set "Jwt:Key" "$(openssl rand -base64 48)" --project Dsw2026Tpi.Api
+```powershell
+git clone -b development https://github.com/BraianMedrano/dsw2026-tpi.git
+cd dsw2026-tpi
+dotnet run --project Dsw2026Tpi.Api --launch-profile http
 ```
 
-- La clave debe tener al menos 32 caracteres.
-- Sin la clave, la API no arranca y muestra el error `JWT Key`.
-- Si se cambia la clave, los tokens emitidos antes dejan de ser válidos y hay que volver a iniciar sesión.
+Al iniciar, la API crea la base SQLite `Dsw2026Tpi.Api/Dsw2026Tpi.db`, aplica las migraciones y crea el administrador de prueba. Swagger queda disponible en `http://localhost:5278/swagger`.
+
+| Usuario       | Email              | Contraseña   |
+| ------------- | ------------------ | ------------ |
+| Administrador | `admin@system.com` | `Admin2026!` |
+
+- La clave JWT debe tener al menos 32 caracteres. Si se cambia, los tokens emitidos antes dejan de ser válidos y hay que volver a iniciar sesión.
+- `appsettings.json` no contiene estos valores. Fuera de `Development`, la clave y el administrador deben configurarse con variables de entorno.
+- User Secrets reemplaza los valores del archivo. Si un integrante ya tiene configurados `Jwt:Key` o `InitialAdministrator`, la API usa los suyos.
+
+### Agregar otro administrador
+
+1. Detener la API.
+2. Cambiar `InitialAdministrator:Email` y `InitialAdministrator:Password` en `appsettings.Development.json` o en User Secrets.
+3. Volver a iniciar la API.
+
+El arranque crea el nuevo administrador y conserva la base. Los administradores anteriores siguen activos.
+
+Cambiar solo la contraseña de un email existente no la actualiza, porque el arranque no modifica una cuenta ya creada. Para aplicarla en una base descartable, detener la API, eliminar `Dsw2026Tpi.Api/Dsw2026Tpi.db*` y volver a iniciarla. Ese procedimiento borra todos los datos.
 
 ## Integración con el frontend
 

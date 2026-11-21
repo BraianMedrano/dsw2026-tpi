@@ -10,7 +10,9 @@ La aplicación crea un único administrador inicial durante el arranque:
 2. `Dsw2026Tpi.Api → ApplicationStartupInitializer.InitializeAsync` aplica las migraciones en Development.
 3. `Dsw2026Tpi.Api → InitialAdministratorBootstrapper.InitializeAsync` crea el usuario y le asigna el rol `Administrador`.
 
-Las credenciales se leen desde User Secrets o variables de entorno. En Visual Studio:
+En `Development`, `appsettings.Development.json` define un administrador de prueba (`admin@system.com`) para que la API funcione desde un clon nuevo. Ese archivo no se usa en otros ambientes.
+
+User Secrets y las variables de entorno reemplazan esos valores. Para usar credenciales propias en Visual Studio:
 
 1. Clic derecho sobre `Dsw2026Tpi.Api`.
 2. Seleccionar **Manage User Secrets**.
@@ -25,7 +27,7 @@ Las credenciales se leen desde User Secrets o variables de entorno. En Visual St
 }
 ```
 
-Como alternativa, las variables de entorno se llaman `InitialAdministrator__Email` e `InitialAdministrator__Password`. Nunca se deben copiar valores reales a `appsettings.json`, README, commits ni capturas.
+Como alternativa, las variables de entorno se llaman `InitialAdministrator__Email` e `InitialAdministrator__Password`. Nunca se deben copiar credenciales reales a `appsettings.json`, README, commits ni capturas; los valores versionados en `appsettings.Development.json` son solo de prueba.
 
 No existe `POST /api/auth/admin/register`. El TPI solo necesita el administrador inicial y un registro público permitiría que cualquier persona se asigne privilegios. Si en el futuro el negocio requiere más administradores, deberá agregarse un caso de uso separado y protegido por `AdminPolicy`; no forma parte de esta funcionalidad.
 
